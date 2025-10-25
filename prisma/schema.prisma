@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Document {
+  id        String   @id @default(cuid())
+  title     String
+  url       String?
+  chunks    Chunk[]
+  createdAt DateTime @default(now())
+}
+
+model Chunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  start       Int
+  end         Int
+  text        String
+  retrievals  Retrieval[]
+}
+
+model Config {
+  id           String   @id @default(cuid())
+  baseModel    String
+  topK         Int
+  threshold    Float
+  systemPrompt String
+  runs         Run[]
+  createdAt    DateTime @default(now())
+}
+
+model Question {
+  id        String   @id @default(cuid())
+  text      String
+  createdAt DateTime @default(now())
+  runs      Run[]
+}
+
+model Run {
+  id          String    @id @default(cuid())
+  questionId  String
+  question    Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  configId    String
+  config      Config    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  answer      Answer?
+  retrievals  Retrieval[]
+  feedback    Feedback[]
+  createdAt   DateTime  @default(now())
+}
+
+model Retrieval {
+  id       String  @id @default(cuid())
+  runId    String
+  run      Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  chunkId  String
+  chunk    Chunk   @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  score    Float
+}
+
+model Answer {
+  id    String @id @default(cuid())
+  runId String @unique
+  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  text  String
+  trace String?
+}
+
+model Feedback {
+  id       String  @id @default(cuid())
+  runId    String
+  run      Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  by       String
+  helpful  Int?
+  correct  Int?
+  relevant Int?
+  score    Float?
+  notes    String?
+}

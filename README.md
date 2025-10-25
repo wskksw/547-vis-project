@@ -1,36 +1,83 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RAG Diagnostics Dashboard
 
-## Getting Started
+An interactive Next.js 16 application for inspecting retrieval-augmented course chatbots. The UI is backed by Prisma, PostgreSQL, and a pgvector-enabled embedding store so researchers can compare model runs, retrievals, and feedback in one place.
 
-First, run the development server:
+Use the development [onboarding guide](./docs/dev-onboarding.md) to setup. 
+## Prerequisites
+
+- Node.js 20+ and npm
+- PostgreSQL 16+ with the `pgvector` and `pgcrypto` extensions
+- OpenAI API key (required for embedding real documents and live RAG generation)
+
+If you do not already have PostgreSQL with pgvector, the quickest path is Docker:
+
+```bash
+docker run --name ragdb \
+  -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=rag \
+  -p 5432:5432 -d pgvector/pgvector:pg16
+
+psql postgresql://postgres:pass@localhost:5432/rag \
+  -c "CREATE EXTENSION IF NOT EXISTS vector;" \
+```
+
+## Environment setup
+
+1. Install dependencies: `npm install`
+2. Create a local `.env` (`cp .env.example .env`) and fill in:
+   - `DATABASE_URL`
+   - `OPENAI_API_KEY` (only required for embeddings or live runs)
+   - Optional overrides: `RAG_GENERATION_MODEL`, `RAG_TOP_K`, etc.
+3. Generate the Prisma client (optional but recommended): `npm run prisma:generate`
+4. Apply database migrations: `npm run prisma:migrate`
+
+## Seeding data
+
+The project ships with two complementary seed scripts:
+
+| Script | Command | What it does |
+| ------ | ------- | ------------ |
+| Document ingest | `npm run seed:documents` | Reads markdown/PDF in `raw_data/course_content`, stores `Document` + `Chunk` rows, and writes embeddings to the `rag_chunk_embeddings` pgvector table. Requires `OPENAI_API_KEY`. |
+| Sample runs | `npm run seed` | Generates deterministic questions, configurations, runs, retrievals, answers, and feedback. It reuses existing documents/chunks when available, and only inserts placeholder chunks if nothing has been loaded yet. |
+
+Recommended order for a fresh database:
+
+```bash
+npm run seed:documents   # optional if you only need synthetic chunks
+npm run seed             # always run to load the comparison data set
+```
+
+You can regenerate the synthetic source JSON without touching the database via `npm run generate:sample`. The seed scripts automatically clear and repopulate related Prisma tables, but they leave any previously embedded vectors in place unless `seed:documents` is executed.
+
+## Running the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit `http://localhost:3000/dashboard` for the overview. Other routes:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `/question/[id]` – question-level detail view with live RAG comparison
+- `/compare` – manual A/B comparison workspace
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Database schema
 
-## Learn More
+Key Prisma models:
 
-To learn more about Next.js, take a look at the following resources:
+- `Document` → source files loaded from `raw_data` or fallback metadata
+- `Chunk` → text segments used for retrieval; linked to `Document`
+- `Config` → generation presets (model, topK, threshold, system prompt)
+- `Question` → canonical questions under analysis
+- `Run` → a single model/config answer for a question
+- `Retrieval` → the chunks retrieved for a run (with similarity score)
+- `Answer` → generated or human-authored answer text
+- `Feedback` → qualitative or quantitative run assessments
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Vector embeddings are stored in the `rag_chunk_embeddings` table managed by `scripts/seedDocuments.ts`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Reference documentation
 
-## Deploy on Vercel
+- `docs/architecture.md` – high-level system overview
+- `docs/dev-onboarding.md` – step-by-step guide for new contributors without PostgreSQL/pgvector installed
+- `scripts/README.md` – additional context on data generation utilities
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Feel free to open issues or PRs with improvements to the workflow or analysis tools. The dashboard is designed to be extended with additional metrics, filters, and visualization panels.
