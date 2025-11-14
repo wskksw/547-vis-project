@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { QuestionComparisonClient } from "@/components/QuestionComparisonClient";
+import { DeepDiveLauncher } from "@/components/DeepDiveLauncher";
 import type { RunDetail } from "@/lib/types";
 
 type QuestionPageProps = {
@@ -145,9 +146,18 @@ export default async function QuestionDetailPage({
                     {sourceType === "original" ? "Original answer" : "Generated answer"}
                   </span>
                 </div>
-                <span className="text-xs text-zinc-500">
-                  threshold {run.config.threshold}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-500">
+                    threshold {run.config.threshold}
+                  </span>
+                  <DeepDiveLauncher
+                    questionId={question.id}
+                    questionText={question.text}
+                    run={run}
+                    askedAt={question.createdAt}
+                    defaultThreshold={run.config.threshold}
+                  />
+                </div>
               </header>
 
               <section className="space-y-2 rounded-md bg-zinc-50 p-4">

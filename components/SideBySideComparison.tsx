@@ -1,20 +1,16 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import type { LiveRagResult, LiveRagSource } from "./LiveRagRunner";
+import type { LiveRagSource } from "./LiveRagRunner";
+import { DeepDiveLauncher } from "./DeepDiveLauncher";
+import type { ComparisonSlotData } from "@/types/comparison";
 
 type ComparisonProps = {
-  question1: {
-    answer: string;
-    sources: LiveRagSource[];
-    config: {
-      model: string;
-      topK: number;
-      systemPrompt?: string;
-    };
-    timestamp: string;
-  } | null;
-  question2: LiveRagResult | null;
+  question1: ComparisonSlotData | null;
+  question2: ComparisonSlotData | null;
+  questionId: string;
+  questionText: string;
+  defaultThreshold: number;
   onSelectSlot?: (slot: 1 | 2) => void;
   selectedSlot?: 1 | 2 | null;
   canSelect?: boolean;
@@ -117,19 +113,16 @@ function QuestionPanel({
   label,
   data,
   overlappingDocIds,
+  questionText,
+  questionId,
+  defaultThreshold,
 }: {
   label: string;
-  data: {
-    answer: string;
-    sources: LiveRagSource[];
-    config: {
-      model: string;
-      topK: number;
-      systemPrompt?: string;
-    };
-    timestamp: string;
-  } | null;
+  data: ComparisonSlotData | null;
   overlappingDocIds: Set<string>;
+  questionText: string;
+  questionId: string;
+  defaultThreshold: number;
 }) {
   if (!data) {
     return (
@@ -147,9 +140,16 @@ function QuestionPanel({
     <div className="space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
       <header>
         <p className="text-xs uppercase tracking-wide text-zinc-500">{label}</p>
-        <p className="mt-1 text-[11px] text-zinc-400">
-          {new Date(data.timestamp).toLocaleString()}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+          <span>{new Date(data.timestamp).toLocaleString()}</span>
+          <DeepDiveLauncher
+            questionId={questionId}
+            questionText={questionText}
+            askedAt={data.timestamp}
+            source={data.origin}
+            defaultThreshold={defaultThreshold}
+          />
+        </div>
       </header>
 
       <ConfigPanel config={data.config} />
@@ -190,7 +190,13 @@ function QuestionPanel({
   );
 }
 
-export function SideBySideComparison({ question1, question2 }: ComparisonProps) {
+export function SideBySideComparison({
+  question1,
+  question2,
+  questionId,
+  questionText,
+  defaultThreshold,
+}: ComparisonProps) {
   const overlappingDocs = useMemo(() => {
     if (!question1 || !question2) {
       return { docIds: new Set<string>(), details: [] };
@@ -233,16 +239,6 @@ export function SideBySideComparison({ question1, question2 }: ComparisonProps) 
     return { docIds: overlapping, details };
   }, [question1, question2]);
 
-  // Convert question2 to match the expected format
-  const question2Data = question2
-    ? {
-      answer: question2.answer,
-      sources: question2.sources,
-      config: question2.config,
-      timestamp: question2.generatedAt,
-    }
-    : null;
-
   return (
     <div className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-2">
@@ -250,11 +246,17 @@ export function SideBySideComparison({ question1, question2 }: ComparisonProps) 
           label="Question 1 (Baseline)"
           data={question1}
           overlappingDocIds={overlappingDocs.docIds}
+          questionText={questionText}
+          questionId={questionId}
+          defaultThreshold={defaultThreshold}
         />
         <QuestionPanel
           label="Question 2 (New Generation)"
-          data={question2Data}
+          data={question2}
           overlappingDocIds={overlappingDocs.docIds}
+          questionText={questionText}
+          questionId={questionId}
+          defaultThreshold={defaultThreshold}
         />
       </div>
 

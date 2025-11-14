@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DiffView } from "./DiffView";
 import type { RunDetail } from "@/lib/types";
 import {
   LiveRagRunner,
   type LiveRagResult,
-  type LiveRagSource,
 } from "./LiveRagRunner";
 import { SideBySideComparison } from "./SideBySideComparison";
+import type { ComparisonSlotData } from "@/types/comparison";
 
 type QuestionComparisonClientProps = {
   questionId: string;
@@ -19,27 +19,91 @@ type QuestionComparisonClientProps = {
   topK: number;
 };
 
+const RUN_HISTORY_STORAGE_KEY = "rag-viz::live-runs";
+const MAX_SAVED_RUNS = 15;
+
+function createSlotFromRun(run: RunDetail | null): ComparisonSlotData | null {
+  if (!run?.answer?.text) {
+    return null;
+  }
+
+  return {
+    answer: run.answer.text,
+    sources: run.retrievals.map((retrieval) => ({
+      chunkId: retrieval.chunk.id,
+      documentTitle: retrieval.chunk.document.title,
+      score: retrieval.score,
+      content: retrieval.chunk.text,
+    })),
+    config: {
+      model: run.config.baseModel,
+      topK: run.config.topK,
+      systemPrompt: run.config.systemPrompt || undefined,
+    },
+    timestamp: run.createdAt.toISOString(),
+    origin: { kind: "run", run },
+  };
+}
+
+function createSlotFromLive(result: LiveRagResult): ComparisonSlotData {
+  return {
+    answer: result.answer,
+    sources: result.sources,
+    config: result.config,
+    timestamp: result.generatedAt,
+    origin: { kind: "live", result },
+  };
+}
+
 export function QuestionComparisonClient({
   questionText,
+  questionId,
   baseline,
   variant,
   generationModel,
   topK,
 }: QuestionComparisonClientProps) {
-  const [savedRuns, setSavedRuns] = useState<LiveRagResult[]>([]);
+  const [savedRuns, setSavedRuns] = useState<LiveRagResult[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    try {
+      const raw = window.localStorage.getItem(RUN_HISTORY_STORAGE_KEY);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.slice(0, MAX_SAVED_RUNS) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedSlot, setSelectedSlot] = useState<1 | 2 | null>(null);
-  const [question1, setQuestion1] = useState<{
-    answer: string;
-    sources: LiveRagSource[];
-    config: { model: string; topK: number; systemPrompt?: string };
-    timestamp: string;
-  } | null>(null);
-  const [question2, setQuestion2] = useState<LiveRagResult | null>(null);
+  const [question1, setQuestion1] = useState<ComparisonSlotData | null>(() =>
+    createSlotFromRun(baseline),
+  );
+  const [question2, setQuestion2] = useState<ComparisonSlotData | null>(() =>
+    createSlotFromRun(variant),
+  );
 
   // Get system prompt from baseline or variant config (prefer baseline)
   const systemPrompt = useMemo(() => {
     return baseline?.config.systemPrompt || variant?.config.systemPrompt || undefined;
   }, [baseline, variant]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (savedRuns.length === 0) {
+      window.localStorage.removeItem(RUN_HISTORY_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      RUN_HISTORY_STORAGE_KEY,
+      JSON.stringify(savedRuns.slice(0, MAX_SAVED_RUNS)),
+    );
+  }, [savedRuns]);
 
   const infoBanner = useMemo(() => {
     if (!baseline && !variant) {
@@ -51,82 +115,29 @@ export function QuestionComparisonClient({
     return null;
   }, [baseline, variant]);
 
-  // Initialize question1 from baseline on mount or when baseline changes
-  useMemo(() => {
-    if (baseline && baseline.answer) {
-      const q1Data = {
-        answer: baseline.answer.text,
-        sources: baseline.retrievals.map((r) => ({
-          chunkId: r.chunk.id,
-          documentTitle: r.chunk.document.title,
-          score: r.score,
-          content: r.chunk.text,
-        })),
-        config: {
-          model: baseline.config.baseModel,
-          topK: baseline.config.topK,
-          systemPrompt: baseline.config.systemPrompt || undefined,
-        },
-        timestamp: baseline.createdAt.toISOString(),
-      };
-      setQuestion1(q1Data);
-    }
-  }, [baseline]);
-
-  // Initialize question2 from variant on mount or when variant changes
-  useMemo(() => {
-    if (variant && variant.answer) {
-      const q2Data = {
-        answer: variant.answer.text,
-        sources: variant.retrievals.map((r) => ({
-          chunkId: r.chunk.id,
-          documentTitle: r.chunk.document.title,
-          score: r.score,
-          content: r.chunk.text,
-        })),
-        config: {
-          model: variant.config.baseModel,
-          topK: variant.config.topK,
-          systemPrompt: variant.config.systemPrompt || undefined,
-        },
-        generatedAt: variant.createdAt.toISOString(),
-      };
-      setQuestion2(q2Data);
-    }
-  }, [variant]);
-
   const handleLiveComplete = (result: LiveRagResult) => {
-    // Save the run to the list
-    setSavedRuns((prev) => [result, ...prev]);
+    setSavedRuns((prev) => {
+      const deduped = prev.filter(
+        (entry) => !(entry.generatedAt === result.generatedAt && entry.answer === result.answer),
+      );
+      return [result, ...deduped].slice(0, MAX_SAVED_RUNS);
+    });
+
+    const slot = createSlotFromLive(result);
 
     // Determine where to place it
     if (!question1 && !question2) {
-      // First run goes to question1
-      setQuestion1({
-        answer: result.answer,
-        sources: result.sources,
-        config: result.config,
-        timestamp: result.generatedAt,
-      });
+      setQuestion1(slot);
     } else if (!question2 && question1) {
-      // Second run goes to question2
-      setQuestion2(result);
+      setQuestion2(slot);
     } else if (selectedSlot === 1) {
-      // Replace question1
-      setQuestion1({
-        answer: result.answer,
-        sources: result.sources,
-        config: result.config,
-        timestamp: result.generatedAt,
-      });
+      setQuestion1(slot);
       setSelectedSlot(null);
     } else if (selectedSlot === 2) {
-      // Replace question2
-      setQuestion2(result);
+      setQuestion2(slot);
       setSelectedSlot(null);
     } else {
-      // Both slots filled, no selection - replace question2 by default
-      setQuestion2(result);
+      setQuestion2(slot);
     }
   };
 
@@ -135,22 +146,25 @@ export function QuestionComparisonClient({
   };
 
   const handleLoadRun = (run: LiveRagResult, targetSlot: 1 | 2) => {
-    const runData = {
-      answer: run.answer,
-      sources: run.sources,
-      config: run.config,
-      timestamp: run.generatedAt,
-    };
+    const slot = createSlotFromLive(run);
 
     if (targetSlot === 1) {
-      setQuestion1(runData);
+      setQuestion1(slot);
     } else {
-      setQuestion2(run);
+      setQuestion2(slot);
     }
   };
 
   const comparisonBaseline = baseline;
   const comparisonVariant = variant;
+
+  const fallbackThreshold = useMemo(() => {
+    const threshold = baseline?.config.threshold ?? variant?.config.threshold;
+    if (typeof threshold === "number") {
+      return threshold;
+    }
+    return 0.3;
+  }, [baseline, variant]);
 
   const bothSlotsPopulated = !!question1 && !!question2;
 
@@ -173,6 +187,9 @@ export function QuestionComparisonClient({
       <SideBySideComparison
         question1={question1}
         question2={question2}
+        questionId={questionId}
+        questionText={questionText}
+        defaultThreshold={fallbackThreshold}
         onSelectSlot={handleSelectSlot}
         selectedSlot={selectedSlot}
         canSelect={bothSlotsPopulated}
@@ -194,7 +211,8 @@ export function QuestionComparisonClient({
             Run History ({savedRuns.length})
           </p>
           <p className="mt-1 text-xs text-zinc-600">
-            Click on a run to load it into the comparison view
+            Click on a run to load it into the comparison view. Stored locally in your
+            browser.
           </p>
           <ul className="mt-3 space-y-2">
             {savedRuns.map((run, index) => (
