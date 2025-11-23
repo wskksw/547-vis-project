@@ -11,8 +11,8 @@ type DashboardData = {
 };
 
 async function getDashboardData(): Promise<DashboardData> {
-  const runs = await prisma.run.findMany({
-    include: { config: true, question: true, feedback: true, answer: true },
+  const answers = await prisma.answer.findMany({
+    include: { question: true },
     orderBy: { createdAt: "desc" },
   });
 
@@ -22,14 +22,13 @@ async function getDashboardData(): Promise<DashboardData> {
   const classifySource = (params: {
     baseModel: string;
     trace?: string | null;
-    notes?: string | null;
   }): "original" | "generated" => {
     const base = params.baseModel.toLowerCase();
     if (base.includes("student") || base.includes("human") || base.includes("original")) {
       return "original";
     }
 
-    const meta = `${params.trace ?? ""} ${params.notes ?? ""}`.toLowerCase();
+    const meta = `${params.trace ?? ""}`.toLowerCase();
     if (/\boriginal|\breal transcript|\bsubmitted/.test(meta)) {
       return "original";
     }
@@ -41,16 +40,21 @@ async function getDashboardData(): Promise<DashboardData> {
     return "generated";
   };
 
-  runs.forEach((run) => {
-    const humanFeedback = run.feedback.find((fb) => fb.by === "human");
-    const nlpFeedback = run.feedback.find((fb) => fb.by === "nlp");
+  answers.forEach((answer) => {
+    const metrics = answer.metrics as any;
+    const config = answer.config as any;
+    
+    const helpful = metrics?.helpful ?? null;
+    const harmfulWrong = metrics?.harmfulWrong ?? null;
+    const answerableRelevant = metrics?.answerableRelevant ?? null;
+    const userScore = metrics?.userScore ?? null;
 
     const computedScore =
-      nlpFeedback?.score ??
+      answer.llmScore ??
       computeAggregateScore({
-        correct: humanFeedback?.correct ?? null,
-        helpful: humanFeedback?.helpful ?? null,
-        relevant: humanFeedback?.relevant ?? null,
+        correct: harmfulWrong === 0 ? 1 : 0,
+        helpful: helpful ?? null,
+        relevant: answerableRelevant ?? null,
       });
 
     if (typeof computedScore === "number" && !Number.isNaN(computedScore)) {
@@ -58,12 +62,11 @@ async function getDashboardData(): Promise<DashboardData> {
     }
 
     const flagged =
-      humanFeedback?.correct === 0 ||
-      humanFeedback?.helpful === 0 ||
-      humanFeedback?.relevant === 0;
+      userScore === -1 ||
+      harmfulWrong === 1;
 
     const answerSnippet = (() => {
-      const text = run.answer?.text?.trim();
+      const text = answer.text?.trim();
       if (!text) {
         return null;
       }
@@ -74,31 +77,30 @@ async function getDashboardData(): Promise<DashboardData> {
     })();
 
     const sourceType = classifySource({
-      baseModel: run.config.baseModel,
-      trace: run.answer?.trace ?? null,
-      notes: humanFeedback?.notes ?? null,
+      baseModel: config?.model ?? "unknown",
+      trace: answer.trace ?? null,
     });
 
-    const existing = questions.get(run.questionId) ?? {
-      id: run.question.id,
-      text: run.question.text,
-      createdAt: run.question.createdAt.toISOString(),
+    const existing = questions.get(answer.questionId) ?? {
+      id: answer.question.id,
+      text: answer.question.text,
+      createdAt: answer.question.createdAt.toISOString(),
       flaggedRunCount: 0,
       runs: [],
     };
 
     existing.runs.push({
-      id: run.id,
-      questionId: run.questionId,
+      id: answer.id,
+      questionId: answer.questionId,
       config: {
-        id: run.config.id,
-        baseModel: run.config.baseModel,
-        topK: run.config.topK,
-        threshold: run.config.threshold,
+        id: answer.id,
+        baseModel: config?.model ?? "unknown",
+        topK: config?.topK ?? 3,
+        threshold: 0,
       },
-      createdAt: run.createdAt.toISOString(),
+      createdAt: answer.createdAt.toISOString(),
       score: typeof computedScore === "number" ? computedScore : null,
-      humanCorrect: humanFeedback?.correct ?? null,
+      humanCorrect: harmfulWrong === 0 ? 1 : 0,
       flagged,
       answerSnippet,
       sourceType,
@@ -108,7 +110,7 @@ async function getDashboardData(): Promise<DashboardData> {
       existing.flaggedRunCount += 1;
     }
 
-    questions.set(run.questionId, existing);
+    questions.set(answer.questionId, existing);
   });
 
   const questionList = Array.from(questions.values()).map((question) => {
@@ -139,7 +141,7 @@ async function getDashboardData(): Promise<DashboardData> {
   return {
     questions: questionList,
     questionCount: questions.size,
-    runCount: runs.length,
+    runCount: answers.length,
     averageScore,
   };
 }

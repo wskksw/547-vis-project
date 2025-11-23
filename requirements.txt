@@ -6,3 +6,4 @@ psycopg2-binary
 pandas
 matplotlib
 seaborn
+nest_asyncio

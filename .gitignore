@@ -35,6 +35,8 @@ yarn-error.log*
 !.env.example
 
 /.venv/
+/venv/
+/.venv312/
 
 # vercel
 .vercel

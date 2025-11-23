@@ -43,7 +43,10 @@ export async function GET() {
       }
 
       // Parse metrics for flags
-      const metrics = (answer.metrics as any) || {};
+      let metrics: any = {};
+      if (answer.metrics && typeof answer.metrics === 'object') {
+        metrics = answer.metrics;
+      }
       const isFlagged = metrics.harmfulWrong === 1 || metrics.userScore === -1;
 
       // Parse config
@@ -66,9 +69,9 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json(dataPoints);
+    return NextResponse.json({ success: true, data: dataPoints });
   } catch (error) {
     console.error("Error fetching viz data:", error);
-    return NextResponse.json({ error: "Failed to fetch data" }, { status: 500 });
+    return NextResponse.json({ success: false, error: "Failed to fetch data" }, { status: 500 });
   }
 }

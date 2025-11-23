@@ -132,13 +132,14 @@ async function seedVectorStore(chunks: DocumentChunk[]) {
     connectionString: process.env.DATABASE_URL,
   });
 
+  // Ensure extensions exist FIRST
+  await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
+  await pool.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
+
+  // THEN register types
   pool.on("connect", async (client) => {
     await pgvector.registerTypes(client);
   });
-
-  // Ensure extensions exist
-  await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
-  await pool.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
 
   // Create table if it doesn't exist
   await pool.query(
