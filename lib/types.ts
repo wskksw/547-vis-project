@@ -1,21 +1,12 @@
 import type {
   Answer,
-  Config,
-  Feedback,
   Question,
-  Retrieval,
-  Run,
   Chunk,
   Document,
 } from "@prisma/client";
 
-export type QuestionWithRuns = Question & {
-  runs: Array<
-    Run & {
-      config: Config;
-      feedback: Feedback[];
-    }
-  >;
+export type QuestionWithAnswers = Question & {
+  answers: Answer[];
 };
 
 export type DashboardRun = {
@@ -43,11 +34,8 @@ export type DashboardQuestion = {
   runs: DashboardRun[];
 };
 
-export type RunDetail = Run & {
-  config: Config;
-  answer: Answer | null;
-  retrievals: Array<Retrieval & { chunk: Chunk & { document: Document } }>;
-  feedback: Feedback[];
+export type AnswerDetail = Answer & {
+  question: Question;
 };
 
 export type MetricsRow = {
@@ -92,8 +80,7 @@ export type SeedQuestion = {
           title: string;
           url?: string;
         };
-        start: number;
-        end: number;
+        index: number;
         text: string;
       };
       score: number;

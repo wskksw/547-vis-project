@@ -25,8 +25,7 @@ type DocumentEvidence = {
   documentId: string;
   title: string;
   text: string;
-  start: number;
-  end: number;
+  index: number;
   score: number;
   retrievedAt: string;
 };
@@ -255,8 +254,7 @@ export function SingleQuestionDeepDive({
       documentId: retrieval.chunk.document.id,
       title: retrieval.chunk.document.title,
       text: retrieval.chunk.text,
-      start: retrieval.chunk.start,
-      end: retrieval.chunk.end,
+      index: retrieval.chunk.index,
       score: retrieval.score,
       retrievedAt: run.createdAt?.toString() ?? "",
     }));
@@ -276,8 +274,7 @@ export function SingleQuestionDeepDive({
         documentId: doc.documentId ?? existing?.documentId ?? chunkId,
         title: doc.documentTitle ?? existing?.title ?? `Document ${index + 1}`,
         text: doc.text ?? existing?.text ?? "",
-        start: doc.start ?? existing?.start ?? 0,
-        end: doc.end ?? existing?.end ?? (doc.text?.length ?? 0),
+        index: doc.index ?? existing?.index ?? 0,
         score: doc.score ?? existing?.score ?? 0,
         retrievedAt: run.createdAt?.toString() ?? "",
       });
@@ -796,106 +793,106 @@ export function SingleQuestionDeepDive({
             ) : (
               <ul className="space-y-3">
                 {orderedDocuments.map((doc) => {
-                const relevance =
-                  selectedSentence?.supportingChunks.find(
-                    (chunk) => chunk.chunkId === doc.id,
-                  )?.similarity ?? doc.score;
-                const isActive = selectedChunkId === doc.id;
-                const shouldHighlight =
-                  Boolean(highlightPattern && selectedSentence && relevance > 0);
+                  const relevance =
+                    selectedSentence?.supportingChunks.find(
+                      (chunk) => chunk.chunkId === doc.id,
+                    )?.similarity ?? doc.score;
+                  const isActive = selectedChunkId === doc.id;
+                  const shouldHighlight =
+                    Boolean(highlightPattern && selectedSentence && relevance > 0);
 
-                const contentParts =
-                  shouldHighlight && highlightPattern
-                    ? doc.text.split(highlightPattern)
-                    : [doc.text];
+                  const contentParts =
+                    shouldHighlight && highlightPattern
+                      ? doc.text.split(highlightPattern)
+                      : [doc.text];
 
-                return (
-                  <li key={doc.id}>
-                    <article
-                      className={`rounded-lg border p-4 transition ${isActive
-                        ? "border-blue-400 bg-blue-50"
-                        : "border-zinc-200 bg-zinc-50"
-                        }`}
-                    >
-                      <header className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-zinc-900">
-                            {doc.title}
-                          </p>
-                          <p className="text-[11px] text-zinc-500">
-                            chars {doc.start} - {doc.end}
-                          </p>
-                        </div>
-                        <div className="text-right text-xs text-zinc-600">
-                          <p>
-                            Similarity{" "}
-                            <span className="font-semibold text-zinc-900">
-                              {Math.round(relevance * 100)}%
-                            </span>
-                          </p>
-                          <div className="mt-1 h-1.5 w-24 rounded-full bg-zinc-200">
-                            <div
-                              className="h-full rounded-full bg-blue-500"
-                              style={{ width: `${Math.min(relevance * 100, 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </header>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDocumentSelect(doc.id)}
-                        className="mt-3 w-full text-left text-sm text-zinc-700"
+                  return (
+                    <li key={doc.id}>
+                      <article
+                        className={`rounded-lg border p-4 transition ${isActive
+                          ? "border-blue-400 bg-blue-50"
+                          : "border-zinc-200 bg-zinc-50"
+                          }`}
                       >
-                        {contentParts.map((part, index) => {
-                          if (shouldHighlight && highlightPattern && index % 2 === 1) {
-                            return (
-                              <mark
-                                key={`${doc.id}-${index}`}
-                                className="rounded bg-blue-200/70 px-0.5 text-blue-900"
-                              >
-                                {part}
-                              </mark>
-                            );
-                          }
-                          return <Fragment key={`${doc.id}-${index}`}>{part}</Fragment>;
-                        })}
-                      </button>
+                        <header className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-zinc-900">
+                              {doc.title}
+                            </p>
+                            <p className="text-[11px] text-zinc-500">
+                              Chunk #{doc.index + 1}
+                            </p>
+                          </div>
+                          <div className="text-right text-xs text-zinc-600">
+                            <p>
+                              Similarity{" "}
+                              <span className="font-semibold text-zinc-900">
+                                {Math.round(relevance * 100)}%
+                              </span>
+                            </p>
+                            <div className="mt-1 h-1.5 w-24 rounded-full bg-zinc-200">
+                              <div
+                                className="h-full rounded-full bg-blue-500"
+                                style={{ width: `${Math.min(relevance * 100, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </header>
 
-                      {sentenceLookupByChunk.get(doc.id)?.length ? (
-                        <p className="mt-2 text-[11px] text-blue-700">
-                          Linked sentences:{" "}
-                          {sentenceLookupByChunk
-                            .get(doc.id)!
-                            .map((sentence) => sentence.order)
-                            .join(", ")}
-                        </p>
-                      ) : (
-                        <p className="mt-2 text-[11px] text-zinc-500">
-                          Not referenced in the current answer
-                        </p>
-                      )}
-
-                      <div className="mt-3 text-right">
                         <button
                           type="button"
-                          onClick={() =>
-                            setExpandedDocId((prev) => (prev === doc.id ? null : doc.id))
-                          }
-                          className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                          onClick={() => handleDocumentSelect(doc.id)}
+                          className="mt-3 w-full text-left text-sm text-zinc-700"
                         >
-                          {expandedDocId === doc.id ? "Collapse context" : "Expand context"}
+                          {contentParts.map((part, index) => {
+                            if (shouldHighlight && highlightPattern && index % 2 === 1) {
+                              return (
+                                <mark
+                                  key={`${doc.id}-${index}`}
+                                  className="rounded bg-blue-200/70 px-0.5 text-blue-900"
+                                >
+                                  {part}
+                                </mark>
+                              );
+                            }
+                            return <Fragment key={`${doc.id}-${index}`}>{part}</Fragment>;
+                          })}
                         </button>
-                      </div>
 
-                      {expandedDocId === doc.id && (
-                        <p className="mt-3 rounded bg-white p-3 text-xs text-zinc-600 shadow-inner">
-                          {doc.text}
-                        </p>
-                      )}
-                    </article>
-                  </li>
-                );
+                        {sentenceLookupByChunk.get(doc.id)?.length ? (
+                          <p className="mt-2 text-[11px] text-blue-700">
+                            Linked sentences:{" "}
+                            {sentenceLookupByChunk
+                              .get(doc.id)!
+                              .map((sentence) => sentence.order)
+                              .join(", ")}
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-[11px] text-zinc-500">
+                            Not referenced in the current answer
+                          </p>
+                        )}
+
+                        <div className="mt-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedDocId((prev) => (prev === doc.id ? null : doc.id))
+                            }
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                          >
+                            {expandedDocId === doc.id ? "Collapse context" : "Expand context"}
+                          </button>
+                        </div>
+
+                        {expandedDocId === doc.id && (
+                          <p className="mt-3 rounded bg-white p-3 text-xs text-zinc-600 shadow-inner">
+                            {doc.text}
+                          </p>
+                        )}
+                      </article>
+                    </li>
+                  );
                 })}
               </ul>
             )}

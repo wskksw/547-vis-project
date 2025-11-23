@@ -1,36 +1,36 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { computeAggregateScore } from "@/lib/scoring";
 import type { MetricsRow } from "@/lib/types";
 
 export async function GET() {
-  const runs = await prisma.run.findMany({
+  const answers = await prisma.answer.findMany({
     include: {
-      config: true,
       question: true,
-      feedback: true,
     },
   });
 
-  const data: MetricsRow[] = runs.map((run) => {
-    const humanFeedback = run.feedback.find((f) => f.by === "human");
-    const nlpFeedback = run.feedback.find((f) => f.by === "nlp");
+  const data: MetricsRow[] = answers.map((answer) => {
+    const config = (answer.config as any) || {};
+    const metrics = (answer.metrics as any) || {};
+
+    // Determine humanCorrect based on metrics
+    // If helpful is 1, we can consider it correct/helpful. 
+    // If harmfulWrong is 1, it's definitely not correct.
+    // userScore might be a scale.
+    let humanCorrect: number | null = null;
+    if (metrics.helpful === 1) humanCorrect = 1;
+    if (metrics.harmfulWrong === 1) humanCorrect = 0;
+    if (metrics.userScore === -1) humanCorrect = 0;
 
     return {
-      runId: run.id,
-      questionId: run.questionId,
-      question: run.question.text,
-      baseModel: run.config.baseModel,
-      topK: run.config.topK,
-      score:
-        nlpFeedback?.score ??
-        computeAggregateScore({
-          correct: humanFeedback?.correct ?? null,
-          helpful: humanFeedback?.helpful ?? null,
-          relevant: humanFeedback?.relevant ?? null,
-        }),
-      humanCorrect: humanFeedback?.correct ?? null,
-      createdAt: run.createdAt.toISOString(),
+      runId: answer.id,
+      questionId: answer.questionId,
+      question: answer.question.text,
+      baseModel: config.model || "default",
+      topK: config.topK || 0,
+      score: answer.llmScore ?? null,
+      humanCorrect,
+      createdAt: answer.createdAt.toISOString(),
     };
   });
 

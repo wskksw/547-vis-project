@@ -27,6 +27,15 @@ type DocumentChunk = {
   };
 };
 
+interface RealDataEntry {
+  standAloneQuestion: string;
+  aiResponse: string;
+  userScore: number;
+  helpful: number;
+  "Answerable/relevant": number;
+  "Harmful/wrong": number;
+}
+
 /**
  * Recursively read all markdown files from a directory
  */
@@ -132,13 +141,19 @@ async function seedVectorStore(chunks: DocumentChunk[]) {
     connectionString: process.env.DATABASE_URL,
   });
 
+  // Setup database extensions and types
+  const setupClient = await pool.connect();
+  try {
+    await setupClient.query("CREATE EXTENSION IF NOT EXISTS vector");
+    await setupClient.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
+    await pgvector.registerTypes(setupClient);
+  } finally {
+    setupClient.release();
+  }
+
   pool.on("connect", async (client) => {
     await pgvector.registerTypes(client);
   });
-
-  // Ensure extensions exist
-  await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
-  await pool.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
 
   // Create table if it doesn't exist
   await pool.query(
@@ -201,6 +216,52 @@ async function seedVectorStore(chunks: DocumentChunk[]) {
   console.log(`Successfully embedded ${chunks.length} chunks.`);
 }
 
+async function seedQuestions() {
+  const realDataPath = join(process.cwd(), "data", "real_data.json");
+  console.log(`Reading real data from ${realDataPath}...`);
+
+  let realData: RealDataEntry[] = [];
+  try {
+    const fileContent = await readFile(realDataPath, "utf-8");
+    realData = JSON.parse(fileContent);
+  } catch (error) {
+    console.error("Failed to read real_data.json:", error);
+    return;
+  }
+
+  console.log(`Found ${realData.length} questions.`);
+
+  for (const entry of realData) {
+    // Create Question
+    const question = await prisma.question.create({
+      data: {
+        text: entry.standAloneQuestion,
+      },
+    });
+
+    // Create Answer with metrics
+    await prisma.answer.create({
+      data: {
+        questionId: question.id,
+        text: entry.aiResponse,
+        metrics: {
+          userScore: entry.userScore,
+          helpful: entry.helpful,
+          answerableRelevant: entry["Answerable/relevant"],
+          harmfulWrong: entry["Harmful/wrong"],
+        },
+        config: {
+          model: "gpt-4o-mini",
+          topK: 3,
+          systemPrompt: "You are an instructor assistant helping students with course-related questions. Use the provided context to answer student questions accurately. If the context is insufficient, say so and suggest next steps.",
+        },
+        llmScore: null, // Placeholder as requested
+      },
+    });
+  }
+  console.log(`Seeded ${realData.length} questions and answers.`);
+}
+
 /**
  * Main seeding function
  */
@@ -221,9 +282,11 @@ async function main() {
   }
 
   // Clear existing documents and chunks from Prisma database
-  console.log("Clearing existing documents and chunks...");
-  await prisma.chunk.deleteMany();
+  console.log("Clearing existing documents, chunks, and questions...");
+  // Deleting documents cascades to chunks
   await prisma.document.deleteMany();
+  // Deleting questions cascades to answers
+  await prisma.question.deleteMany();
 
   const allChunks: DocumentChunk[] = [];
   const documents: Array<{ id: string; title: string; url?: string }> = [];
@@ -267,7 +330,7 @@ async function main() {
         data: {
           id: chunk.chunkId,
           documentId,
-          index: chunk.metadata.chunkIndex,
+          index: chunk.metadata.chunkIndex, // Using index instead of start/end
           text: chunk.content,
         },
       });
@@ -284,12 +347,15 @@ async function main() {
   console.log("\nSeeding vector store with embeddings...");
   await seedVectorStore(allChunks);
 
-  console.log("\n✓ Document seeding complete!");
+  console.log("\nSeeding questions and answers...");
+  await seedQuestions();
+
+  console.log("\n✓ Database seeding complete!");
 }
 
 main()
   .then(() => {
-    console.log("Database seeded with course content.");
+    console.log("Database seeded successfully.");
   })
   .catch((error) => {
     console.error("Failed to seed database:", error);

@@ -1,0 +1,8 @@
+ragas
+langchain-openai
+langchain-ollama
+datasets
+psycopg2-binary
+pandas
+matplotlib
+seaborn

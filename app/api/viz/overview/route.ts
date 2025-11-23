@@ -19,115 +19,56 @@ export type VizDataPoint = {
 
 export async function GET() {
   try {
-    const runs = await prisma.run.findMany({
+    const answers = await prisma.answer.findMany({
       include: {
         question: true,
-        config: true,
-        feedback: true,
-        answer: true,
-        retrievals: {
-          include: {
-            chunk: {
-              include: {
-                document: true,
-              },
-            },
-          },
-        },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    const dataPoints: VizDataPoint[] = runs.map((run) => {
-      // Compute LLM score from feedback
-      const nlpFeedback = run.feedback.find((fb) => fb.by === "nlp");
-      const humanFeedback = run.feedback.find((fb) => fb.by === "human");
-
-      // Try to get score from trace if it was stored there (from sample data)
-      let llmScore = nlpFeedback?.score ?? null;
-
-      if (llmScore === null && run.answer?.trace) {
-        try {
-          const trace = JSON.parse(run.answer.trace);
-          llmScore = trace.llmScore ?? null;
-        } catch {
-          // Ignore parse errors
+    const dataPoints: VizDataPoint[] = answers.map((answer) => {
+      // Parse retrievals
+      let retrievals: any[] = [];
+      if (answer.retrievals && typeof answer.retrievals === 'object') {
+        if (Array.isArray(answer.retrievals)) {
+          retrievals = answer.retrievals;
         }
       }
 
-      // Fallback: compute from feedback ratings
-      if (llmScore === null && humanFeedback) {
-        const { correct, helpful, relevant } = humanFeedback;
-        const ratings = [correct, helpful, relevant].filter((r) => r !== null) as number[];
-        if (ratings.length > 0) {
-          // Convert 1-5 scale to 0-1 scale
-          llmScore = ratings.reduce((sum, r) => sum + r, 0) / (ratings.length * 5);
-        }
-      }
-
-      // Default to 0.5 if still null (neutral)
-      if (llmScore === null) {
-        llmScore = 0.5;
-      }
-
-      // Compute average similarity from retrievals
+      // Calculate avg similarity
       let avgSimilarity = 0;
-      let similarityFromTrace = null;
-
-      if (run.answer?.trace) {
-        try {
-          const trace = JSON.parse(run.answer.trace);
-          similarityFromTrace = trace.avgSim ?? null;
-        } catch {
-          // Ignore
-        }
+      if (retrievals.length > 0) {
+        const totalScore = retrievals.reduce((sum, r) => sum + (r.score || 0), 0);
+        avgSimilarity = totalScore / retrievals.length;
       }
 
-      if (similarityFromTrace !== null) {
-        avgSimilarity = similarityFromTrace;
-      } else if (run.retrievals.length > 0) {
-        avgSimilarity =
-          run.retrievals.reduce((sum, r) => sum + r.score, 0) / run.retrievals.length;
-      }
+      // Parse metrics for flags
+      const metrics = (answer.metrics as any) || {};
+      const isFlagged = metrics.harmfulWrong === 1 || metrics.userScore === -1;
 
-      // Count human flags (low ratings)
-      let humanFlags = 0;
-      if (humanFeedback) {
-        if (humanFeedback.correct !== null && humanFeedback.correct <= 2) humanFlags++;
-        if (humanFeedback.helpful !== null && humanFeedback.helpful <= 2) humanFlags++;
-        if (humanFeedback.relevant !== null && humanFeedback.relevant <= 2) humanFlags++;
-      }
-
-      // Extract retrieved document info
-      const retrievedDocs = run.retrievals.map((r) => ({
-        title: r.chunk.document.title,
-        score: r.score,
-      }));
+      // Parse config
+      const config = (answer.config as any) || {};
 
       return {
-        runId: run.id,
-        questionId: run.questionId,
-        questionText: run.question.text,
-        timestamp: run.createdAt.toISOString(),
-        llmScore,
+        runId: answer.id,
+        questionId: answer.questionId,
+        questionText: answer.question.text,
+        timestamp: answer.createdAt.toISOString(),
+        llmScore: answer.llmScore ?? 0,
         avgSimilarity,
-        humanFlags,
-        configModel: run.config.baseModel,
-        configTopK: run.config.topK,
-        retrievedDocs,
+        humanFlags: isFlagged ? 1 : 0,
+        configModel: config.model || "default",
+        configTopK: config.topK || retrievals.length,
+        retrievedDocs: retrievals.map((r: any) => ({
+          title: r.documentTitle || "Untitled",
+          score: r.score || 0,
+        })),
       };
     });
 
-    return NextResponse.json({
-      success: true,
-      data: dataPoints,
-      count: dataPoints.length,
-    });
+    return NextResponse.json(dataPoints);
   } catch (error) {
-    console.error("Error fetching visualization data:", error);
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch visualization data" },
-      { status: 500 }
-    );
+    console.error("Error fetching viz data:", error);
+    return NextResponse.json({ error: "Failed to fetch data" }, { status: 500 });
   }
 }
