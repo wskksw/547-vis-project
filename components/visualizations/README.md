@@ -29,7 +29,7 @@ The visualization system transforms raw question-answer data into interactive vi
 **Visual Encodings**:
 - **x-position**: Score bins (0-0.1, 0.1-0.2, ... 0.9-1.0)
 - **y-position**: Count of runs in bin
-- **color**: Red (<0.4), Yellow (0.4-0.7), Green (>0.7)
+- **color**: Sequential light→dark blues (lowest scores = light slate, highest = deep blue)
 
 **Interactions**:
 - Click bin → filter to that score range
@@ -118,7 +118,8 @@ Every component uses D3.js v7 for:
 - **Scales**: `d3.scaleLinear()`, `d3.scaleBand()`, `d3.scaleSequential()`
 - **Axes**: `d3.axisBottom()`, `d3.axisLeft()`
 - **Color**: 
-  - Scatterplot & Histograms: `d3.interpolateRdYlGn` (colorblind-safe diverging scale)
+  - Scatterplot: `d3.interpolateRdYlGn` (colorblind-aware diverging scale)
+  - Histograms: `d3.interpolateBlues` (sequential scale, anchored to observed min/max)
   - Document Fingerprint: `d3.interpolateReds` (sequential scale, 0.1-1.0 range for continuous gradient)
 - **Data binding**: `.data().join()` pattern
 - **Interactions**: `d3.brush()` for selection in scatterplot

@@ -1,9 +1,0 @@
-[
-  {
-    "answer_id": "cmibb6t67000wsb64acay6if4",
-    "faithfulness": 0.75,
-    "answer_relevancy": 0.646455045748178,
-    "llm_context_precision_without_reference": 0.9999999999666667,
-    "llm_score_computed": 0.7988183485716149
-  }
-]
