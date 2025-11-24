@@ -59,12 +59,16 @@ export function DistributionHistograms({
       .domain([0, d3.max(bins, (d) => d.length) || 0])
       .range([height, 0]);
 
-    // Color function based on bin range
-    const getBinColor = (binStart: number) => {
-      if (binStart < 0.4) return "#ef4444"; // Red - poor
-      if (binStart < 0.7) return "#fbbf24"; // Yellow - medium
-      return "#10b981"; // Green - good
-    };
+    // Sequential light→dark color scale for 0→1 scores
+    const minVal = d3.min(values) ?? 0;
+    const maxVal = d3.max(values) ?? 1;
+    const adjustedMax = maxVal === minVal ? minVal + 1 : maxVal;
+    const sequential = d3
+      .scaleSequential(d3.interpolateBlues)
+      .domain([minVal, adjustedMax])
+      .clamp(true);
+    const getBinColor = (binCenter: number) =>
+      d3.interpolateRgb("#f8fafc", sequential(binCenter))(0.9);
 
     // Axes
     const xAxis = d3.axisBottom(xScale).ticks(10);
@@ -171,7 +175,10 @@ export function DistributionHistograms({
       .attr("y", (d) => yScale(d.length))
       .attr("width", (d) => Math.max(0, xScale(d.x1 || 0) - xScale(d.x0 || 0) - 1))
       .attr("height", (d) => height - yScale(d.length))
-      .attr("fill", (d) => getBinColor(d.x0 || 0))
+      .attr("fill", (d) => {
+        const center = ((d.x0 ?? 0) + (d.x1 ?? 0)) / 2;
+        return getBinColor(center);
+      })
       .attr("opacity", 0.8)
       .attr("stroke", "#fff")
       .attr("stroke-width", 1)

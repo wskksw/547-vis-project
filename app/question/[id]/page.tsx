@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { Answer } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { QuestionComparisonClient } from "@/components/QuestionComparisonClient";
 import { DeepDiveLauncher } from "@/components/DeepDiveLauncher";
-import type { RunDetail } from "@/lib/types";
+import type { RunDetail, RunFeedback, RunRetrieval } from "@/lib/types";
 
 type QuestionPageProps = {
   params: Promise<{ id: string }>;
@@ -31,6 +32,142 @@ function deriveSourceType(run: RunDetail): "original" | "generated" {
   return "generated";
 }
 
+type RawRetrieval = {
+  id?: string;
+  score?: number;
+  text?: string;
+  documentTitle?: string;
+  documentId?: string;
+  documentUrl?: string | null;
+  index?: number;
+};
+
+type RawConfig = {
+  model?: string;
+  topK?: number;
+  threshold?: number;
+  systemPrompt?: string;
+};
+
+type RawMetrics = {
+  helpful?: number;
+  relevant?: number;
+  answerableRelevant?: number;
+  harmfulWrong?: number;
+  userScore?: number;
+};
+
+const toNumberOrNull = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+function buildRunFromAnswer(questionId: string, answer: Answer): RunDetail {
+  const rawRetrievals: RawRetrieval[] = Array.isArray(answer.retrievals)
+    ? (answer.retrievals as RawRetrieval[])
+    : [];
+
+  const retrievals: RunRetrieval[] = rawRetrievals.map((retrieval, index) => {
+    const docId =
+      typeof retrieval.documentId === "string" && retrieval.documentId.trim().length > 0
+        ? retrieval.documentId
+        : `doc-${answer.id}-${index + 1}`;
+
+    const document = {
+      id: docId,
+      title: retrieval.documentTitle || "Unknown document",
+      url: typeof retrieval.documentUrl === "string" ? retrieval.documentUrl : null,
+      createdAt: answer.createdAt,
+    };
+
+    const chunkId =
+      typeof retrieval.id === "string" && retrieval.id.trim().length > 0
+        ? retrieval.id
+        : `${answer.id}-chunk-${index + 1}`;
+
+    const chunk = {
+      id: chunkId,
+      documentId: docId,
+      document,
+      index: typeof retrieval.index === "number" ? retrieval.index : index,
+      text: retrieval.text || "",
+    };
+
+    return {
+      id: `${answer.id}-retrieval-${index + 1}`,
+      runId: answer.id,
+      chunkId,
+      chunk,
+      score: typeof retrieval.score === "number" ? retrieval.score : 0,
+    };
+  });
+
+  const rawConfig = (answer.config ?? {}) as RawConfig;
+  const topK =
+    typeof rawConfig.topK === "number" && Number.isFinite(rawConfig.topK)
+      ? rawConfig.topK
+      : Math.max(1, retrievals.length || 1);
+
+  const config = {
+    id: `${answer.id}-config`,
+    baseModel: rawConfig.model || "unknown",
+    topK,
+    threshold: typeof rawConfig.threshold === "number" ? rawConfig.threshold : 0,
+    systemPrompt: typeof rawConfig.systemPrompt === "string" ? rawConfig.systemPrompt : undefined,
+    createdAt: answer.createdAt,
+  };
+
+  const metrics = (answer.metrics ?? {}) as RawMetrics;
+  const feedback: RunFeedback[] = [];
+
+  const nlpFeedback: RunFeedback = {
+    id: `${answer.id}-nlp`,
+    by: "nlp",
+    helpful: toNumberOrNull(metrics.helpful),
+    correct:
+      metrics.harmfulWrong === 0
+        ? 1
+        : metrics.harmfulWrong === 1
+          ? 0
+          : null,
+    relevant: toNumberOrNull(metrics.answerableRelevant ?? metrics.relevant),
+    score: toNumberOrNull(answer.llmScore),
+    notes: null,
+  };
+
+  if (nlpFeedback.helpful !== null || nlpFeedback.correct !== null || nlpFeedback.relevant !== null || nlpFeedback.score !== null) {
+    feedback.push(nlpFeedback);
+  }
+
+  if (metrics.userScore !== undefined && metrics.userScore !== null) {
+    feedback.push({
+      id: `${answer.id}-human`,
+      by: "human",
+      helpful: null,
+      correct: null,
+      relevant: null,
+      score: toNumberOrNull(metrics.userScore),
+      notes: metrics.userScore === -1 ? "Flagged by user" : null,
+    });
+  }
+
+  return {
+    id: answer.id,
+    questionId,
+    configId: config.id,
+    config,
+    createdAt: answer.createdAt,
+    answer: answer.text
+      ? {
+          id: `${answer.id}-answer`,
+          runId: answer.id,
+          text: answer.text,
+          trace: answer.trace ?? undefined,
+        }
+      : null,
+    retrievals,
+    feedback,
+  };
+}
+
 export default async function QuestionDetailPage({
   params,
   searchParams,
@@ -47,23 +184,7 @@ export default async function QuestionDetailPage({
   const question = await prisma.question.findUnique({
     where: { id },
     include: {
-      runs: {
-        include: {
-          config: true,
-          answer: true,
-          feedback: true,
-          retrievals: {
-            include: {
-              chunk: {
-                include: {
-                  document: true,
-                },
-              },
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      },
+      answers: true,
     },
   });
 
@@ -71,7 +192,9 @@ export default async function QuestionDetailPage({
     notFound();
   }
 
-  const runs = question.runs as unknown as RunDetail[];
+  const runs = question.answers
+    .map((answer) => buildRunFromAnswer(question.id, answer))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   const baselineRun = baselineId
     ? (runs.find((run) => run.id === baselineId) as RunDetail | undefined) ??
@@ -119,7 +242,7 @@ export default async function QuestionDetailPage({
       />
 
       <div className="space-y-6">
-        {question.runs.map((run) => {
+        {runs.map((run) => {
           const sourceType = deriveSourceType(run);
           return (
             <article
@@ -187,7 +310,7 @@ export default async function QuestionDetailPage({
                         {retrieval.score.toFixed(2)}
                       </p>
                       <p className="text-xs text-zinc-500">
-                        chars {retrieval.chunk.start} - {retrieval.chunk.end}
+                        Chunk #{retrieval.chunk.index + 1} · ≈{retrieval.chunk.text.length} chars
                       </p>
                       <p className="mt-2 text-sm text-zinc-700">
                         {retrieval.chunk.text}

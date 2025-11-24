@@ -12,7 +12,11 @@ type OverviewDashboardProps = {
 
 export function OverviewDashboard({ data }: OverviewDashboardProps) {
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
-  const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  const [selectedChunk, setSelectedChunk] = useState<{
+    key: string;
+    docTitle: string;
+    chunkIndex: number;
+  } | null>(null);
   const [scoreFilter, setScoreFilter] = useState<{
     metric: "llm" | "similarity";
     range: [number, number];
@@ -27,13 +31,6 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
       result = result.filter((d) => selectedRunIds.has(d.runId));
     }
 
-    // Filter by selected document
-    if (selectedDocument) {
-      result = result.filter((d) =>
-        d.retrievedDocs.some((doc) => doc.title === selectedDocument)
-      );
-    }
-
     // Filter by score range from histogram click
     if (scoreFilter) {
       result = result.filter((d) => {
@@ -43,13 +40,13 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     }
 
     return result;
-  }, [data, selectedRunIds, selectedDocument, scoreFilter]);
+  }, [data, selectedRunIds, scoreFilter]);
 
   const handleBrushSelection = (ids: Set<string>) => {
     setSelectedRunIds(ids);
     // Clear other filters when brushing
     if (ids.size > 0) {
-      setSelectedDocument(null);
+      setSelectedChunk(null);
       setScoreFilter(null);
     }
   };
@@ -58,18 +55,17 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     setScoreFilter({ metric, range });
     // Clear other filters when clicking histogram
     setSelectedRunIds(new Set());
-    setSelectedDocument(null);
+    setSelectedChunk(null);
   };
 
-  const handleDocumentClick = (docTitle: string) => {
-    if (selectedDocument === docTitle) {
-      setSelectedDocument(null);
-    } else {
-      setSelectedDocument(docTitle);
-      // Clear other filters when selecting document
-      setSelectedRunIds(new Set());
-      setScoreFilter(null);
-    }
+  const handleChunkSelect = (payload: { runIds: Set<string>; chunkKey: string; docTitle: string; chunkIndex: number }) => {
+    setSelectedRunIds(payload.runIds);
+    setSelectedChunk({
+      key: payload.chunkKey,
+      docTitle: payload.docTitle,
+      chunkIndex: payload.chunkIndex,
+    });
+    setScoreFilter(null);
   };
 
   const handlePointClick = (runId: string) => {
@@ -82,23 +78,33 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
 
   const clearFilters = () => {
     setSelectedRunIds(new Set());
-    setSelectedDocument(null);
+    setSelectedChunk(null);
     setScoreFilter(null);
   };
 
   const hasActiveFilters =
-    selectedRunIds.size > 0 || selectedDocument !== null || scoreFilter !== null;
+    selectedRunIds.size > 0 || selectedChunk !== null || scoreFilter !== null;
 
   return (
     <div className="space-y-6">
       {/* Header with filter status */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">RAG Quality Overview</h1>
           <p className="text-sm text-gray-600 mt-1">
             Showing {filteredData.length} of {data.length} runs
           </p>
         </div>
+        {filteredData.length === 1 && (
+          <button
+            onClick={() => {
+              const single = filteredData[0];
+              if (single) window.location.href = `/question/${single.questionId}`;
+            }}
+            className="px-4 py-2 text-sm bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-lg transition-colors"
+          >
+            Open Question
+          </button>
+        )}
         {hasActiveFilters && (
           <button
             onClick={clearFilters}
@@ -123,11 +129,16 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
               </button>
             </div>
           )}
-          {selectedDocument && (
+          {selectedChunk && (
             <div className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm flex items-center gap-2">
-              <span>Document: {selectedDocument.slice(0, 30)}...</span>
+              <span>
+                Chunk #{selectedChunk.chunkIndex + 1} · {selectedChunk.docTitle.slice(0, 30)}...
+              </span>
               <button
-                onClick={() => setSelectedDocument(null)}
+                onClick={() => {
+                  setSelectedChunk(null);
+                  setSelectedRunIds(new Set());
+                }}
                 className="hover:bg-green-200 rounded-full p-0.5"
               >
                 ✕
@@ -152,7 +163,7 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
       )}
 
       {/* Visualization grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-6">
         {/* Left column: Scatterplot */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <QualityScatterplot
@@ -163,23 +174,21 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
           />
         </div>
 
-        {/* Right column: Histograms and Document Chart */}
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <DistributionHistograms
-              data={filteredData}
-              onBinClick={handleBinClick}
-            />
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <DocumentUsageChart
-              data={filteredData}
-              selectedDocument={selectedDocument}
-              onDocumentClick={handleDocumentClick}
-            />
-          </div>
+        {/* Right column: Histograms */}
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <DistributionHistograms
+            data={filteredData}
+            onBinClick={handleBinClick}
+          />
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <DocumentUsageChart
+          data={filteredData}
+          activeChunkKey={selectedChunk?.key ?? null}
+          onChunkSelect={handleChunkSelect}
+        />
       </div>
 
       {/* Usage instructions */}
@@ -188,7 +197,7 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• <strong>Scatterplot</strong>: Click and drag to select a region and filter all views</li>
           <li>• <strong>Histograms</strong>: Click a bar to filter by that score range</li>
-          <li>• <strong>Document Chart</strong>: Click a bar to see only runs that retrieved that document</li>
+          <li>• <strong>Document Fingerprint</strong>: Hover for chunk text; click a hotspot to lock details and filter to runs that used that chunk</li>
           <li>• <strong>Points</strong>: Click any point in the scatterplot to view the full question details</li>
           <li>• Hover over any element for detailed information</li>
         </ul>

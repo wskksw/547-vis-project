@@ -1,295 +1,420 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import * as d3 from "d3";
 import type { VizDataPoint } from "@/app/api/viz/overview/route";
 
-type DocumentStats = {
+const ALPHA = 10; // Criticality multiplier for human flags
+const POOR_THRESHOLD = 0.4;
+const MIN_SEGMENT_WIDTH = 6;
+const LABEL_COLUMN = 280;
+
+type ChunkAggregate = {
+  key: string;
+  index: number;
+  text: string;
+  chunkId?: string;
+  occurrences: number;
+  flags: number;
+  poor: number;
+  questions: number;
+  runs: number;
+  severity: number;
+  runIds: string[];
+};
+
+type ChunkAggregateInternal = {
+  key: string;
+  index: number;
+  text: string;
+  chunkId?: string;
+  occurrences: number;
+  flags: number;
+  poor: number;
+  questionIds: Set<string>;
+  runIds: Set<string>;
+};
+
+type DocumentFingerprint = {
   title: string;
-  count: number;
-  avgSimilarity: number;
+  severity: number;
+  humanFlags: number;
+  poorLLM: number;
+  totalRetrievals: number;
+  chunkCount: number;
+  chunks: ChunkAggregate[];
 };
 
 type DocumentUsageChartProps = {
   data: VizDataPoint[];
-  selectedDocument?: string | null;
-  onDocumentClick?: (documentTitle: string) => void;
+  activeChunkKey?: string | null;
+  onChunkSelect?: (payload: { runIds: Set<string>; chunkKey: string | null; docTitle: string; chunkIndex: number | null }) => void;
+};
+
+const truncate = (text: string, limit = 150) => {
+  if (!text) return "No chunk text available.";
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 };
 
 export function DocumentUsageChart({
   data,
-  selectedDocument = null,
-  onDocumentClick,
+  activeChunkKey = null,
+  onChunkSelect,
 }: DocumentUsageChartProps) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 500, height: 400 });
+  const [containerWidth, setContainerWidth] = useState(960);
+  const [activeChunk, setActiveChunk] = useState<{ docTitle: string; chunk: ChunkAggregate | null } | null>(null);
 
-  // Compute document statistics
-  const documentStats = useMemo(() => {
-    const docMap = new Map<string, { count: number; totalSimilarity: number }>();
+  // Track container width so chunk positions map to actual pixels
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    resizeObserver.observe(node);
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Aggregate per-document + per-chunk severity
+  const fingerprints = useMemo<DocumentFingerprint[]>(() => {
+    const docMap = new Map<
+      string,
+      {
+        title: string;
+        chunkMap: Map<string, ChunkAggregateInternal>;
+        flaggedQuestions: Set<string>;
+        poorQuestions: Set<string>;
+        retrievalCount: number;
+        maxIndex: number;
+      }
+    >();
 
     data.forEach((point) => {
+      const flagged = point.humanFlags > 0;
+      const poorLLM = point.llmScore < POOR_THRESHOLD && !flagged;
+
       point.retrievedDocs.forEach((doc) => {
-        const existing = docMap.get(doc.title) || { count: 0, totalSimilarity: 0 };
-        docMap.set(doc.title, {
-          count: existing.count + 1,
-          totalSimilarity: existing.totalSimilarity + doc.score,
-        });
+        const title = doc.title || "Untitled";
+        const chunkIndex = doc.index ?? 0;
+        const key = `${title}-${chunkIndex}-${doc.chunkId ?? ""}`;
+
+        const docEntry =
+          docMap.get(title) ??
+          {
+            title,
+            chunkMap: new Map(),
+            flaggedQuestions: new Set<string>(),
+            poorQuestions: new Set<string>(),
+            retrievalCount: 0,
+            maxIndex: -1,
+          };
+
+        docEntry.retrievalCount += 1;
+        docEntry.maxIndex = Math.max(docEntry.maxIndex, chunkIndex);
+        if (flagged) docEntry.flaggedQuestions.add(point.questionId);
+        if (poorLLM) docEntry.poorQuestions.add(point.questionId);
+
+        const existingChunk =
+          docEntry.chunkMap.get(key) ??
+          {
+            key,
+            index: chunkIndex,
+            text: doc.text ?? "",
+            chunkId: doc.chunkId,
+            occurrences: 0,
+            flags: 0,
+            poor: 0,
+            questionIds: new Set<string>(),
+            runIds: new Set<string>(),
+          };
+
+        existingChunk.occurrences += 1;
+        if (flagged) existingChunk.flags += 1;
+        if (poorLLM) existingChunk.poor += 1;
+        existingChunk.questionIds.add(point.questionId);
+        existingChunk.runIds.add(point.runId);
+        docEntry.chunkMap.set(key, existingChunk);
+        docMap.set(title, docEntry);
       });
     });
 
-    const stats: DocumentStats[] = Array.from(docMap.entries())
-      .map(([title, { count, totalSimilarity }]) => ({
-        title,
-        count,
-        avgSimilarity: totalSimilarity / count,
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 15); // Top 15 documents
+    return Array.from(docMap.values())
+      .map((doc) => {
+        const chunks: ChunkAggregate[] = Array.from(doc.chunkMap.values())
+          .map((chunk) => ({
+            key: chunk.key,
+            index: chunk.index,
+            text: chunk.text,
+            chunkId: chunk.chunkId,
+            occurrences: chunk.occurrences,
+            flags: chunk.flags,
+            poor: chunk.poor,
+            questions: chunk.questionIds.size,
+            runs: chunk.runIds.size,
+            runIds: Array.from(chunk.runIds),
+            severity: chunk.flags * ALPHA + chunk.poor,
+          }))
+          .sort((a, b) => a.index - b.index);
 
-    return stats;
+        const chunkCount = doc.maxIndex >= 0 ? doc.maxIndex + 1 : Math.max(chunks.length, 1);
+        const humanFlags = doc.flaggedQuestions.size;
+        const poorLLM = doc.poorQuestions.size;
+        const severity = humanFlags * ALPHA + poorLLM;
+
+        return {
+          title: doc.title,
+          severity,
+          humanFlags,
+          poorLLM,
+          totalRetrievals: doc.retrievalCount,
+          chunkCount,
+          chunks,
+        };
+      })
+      .sort((a, b) => {
+        if (b.severity !== a.severity) return b.severity - a.severity;
+        if (b.humanFlags !== a.humanFlags) return b.humanFlags - a.humanFlags;
+        return b.totalRetrievals - a.totalRetrievals;
+      });
   }, [data]);
 
-  useEffect(() => {
-    if (!svgRef.current || documentStats.length === 0) return;
+  const maxChunkSeverity = useMemo(() => {
+    const maxVal = Math.max(
+      0,
+      ...fingerprints.flatMap((doc) => doc.chunks.map((chunk) => chunk.severity))
+    );
+    return Math.max(1, maxVal);
+  }, [fingerprints]);
 
-    const margin = { top: 40, right: 80, bottom: 60, left: 200 };
-    const width = dimensions.width - margin.left - margin.right;
-    const height = dimensions.height - margin.top - margin.bottom;
+  const barWidth = Math.max(containerWidth - LABEL_COLUMN - 32, 360);
+  const rowHeight = 32;
 
-    // Clear previous content
-    d3.select(svgRef.current).selectAll("*").remove();
+  const colorForChunk = (chunk: ChunkAggregate) => {
+    if (chunk.severity <= 0) return "#f8fafc";
+    const t = Math.min(1, chunk.severity / maxChunkSeverity);
+    // Use a continuous gradient from white to red
+    return d3.interpolateReds(0.1 + 0.9 * t);
+  };
 
-    const svg = d3
-      .select(svgRef.current)
-      .attr("width", dimensions.width)
-      .attr("height", dimensions.height);
+  const showTooltip = (event: ReactMouseEvent<SVGRectElement, MouseEvent>, docTitle: string, chunk: ChunkAggregate) => {
+    if (!tooltipRef.current) return;
+    const tooltip = tooltipRef.current;
+    tooltip.style.display = "block";
+    tooltip.style.opacity = "1";
+    tooltip.style.left = `${event.clientX + 10}px`;
+    tooltip.style.top = `${event.clientY + 10}px`;
+    tooltip.innerHTML = `
+      <div class="text-xs">
+        <div class="font-semibold mb-1">${docTitle} · Chunk #${chunk.index + 1}</div>
+        <div class="mb-1 text-[11px] text-gray-600">${truncate(chunk.text, 120)}</div>
+        <div class="flex gap-3 text-[11px] text-gray-700">
+          <span>Flags: <strong>${chunk.flags}</strong></span>
+          <span>Poor LLM: <strong>${chunk.poor}</strong></span>
+          <span>Runs: <strong>${chunk.runs}</strong></span>
+        </div>
+      </div>
+    `;
+  };
 
-    const g = svg
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
+  const hideTooltip = () => {
+    if (!tooltipRef.current) return;
+    const tooltip = tooltipRef.current;
+    tooltip.style.opacity = "0";
+    tooltip.style.display = "none";
+  };
 
-    // Scales
-    const xScale = d3
-      .scaleLinear()
-      .domain([0, d3.max(documentStats, (d) => d.count) || 0])
-      .range([0, width]);
-
-    const yScale = d3
-      .scaleBand()
-      .domain(documentStats.map((d) => d.title))
-      .range([0, height])
-      .padding(0.2);
-
-    // Color scale for average similarity (adjusted to realistic range for better contrast)
-    const colorScale = d3
-      .scaleSequential(d3.interpolateRdYlGn)
-      .domain([0.3, 0.9])
-
-    // Axes
-    const xAxis = d3.axisBottom(xScale).ticks(5);
-    const yAxis = d3.axisLeft(yScale);
-
-    g.append("g")
-      .attr("class", "x-axis")
-      .attr("transform", `translate(0,${height})`)
-      .call(xAxis)
-      .selectAll("text")
-      .style("font-size", "11px");
-
-    g.append("g")
-      .attr("class", "y-axis")
-      .call(yAxis)
-      .selectAll("text")
-      .style("font-size", "10px")
-      .attr("text-anchor", "end")
-      .each(function (d) {
-        const text = d3.select(this);
-        const title = d as string;
-        // Truncate long titles
-        if (title.length > 25) {
-          text.text(title.slice(0, 22) + "...");
-        }
+  const handleChunkClick = (docTitle: string, chunk: ChunkAggregate) => {
+    setActiveChunk({ docTitle, chunk });
+    if (onChunkSelect) {
+      onChunkSelect({
+        runIds: new Set(chunk.runIds),
+        chunkKey: chunk.key,
+        docTitle,
+        chunkIndex: chunk.index,
       });
+    }
+  };
 
-    // Axis labels
-    svg
-      .append("text")
-      .attr("class", "x-axis-label")
-      .attr("x", margin.left + width / 2)
-      .attr("y", dimensions.height - 10)
-      .attr("text-anchor", "middle")
-      .style("font-size", "12px")
-      .text("Retrieval Count");
-
-    svg
-      .append("text")
-      .attr("class", "y-axis-label")
-      .attr("x", 10)
-      .attr("y", 20)
-      .attr("text-anchor", "start")
-      .style("font-size", "12px")
-      .style("font-weight", "500")
-      .text("Document");
-
-    // Title
-    svg
-      .append("text")
-      .attr("class", "title")
-      .attr("x", margin.left + width / 2)
-      .attr("y", 20)
-      .attr("text-anchor", "middle")
-      .style("font-size", "14px")
-      .style("font-weight", "600")
-      .text("Document Retrieval Frequency");
-
-    // Tooltip handlers
-    const showTooltip = (event: MouseEvent, d: DocumentStats) => {
-      if (!tooltipRef.current) return;
-
-      const tooltip = d3.select(tooltipRef.current);
-      tooltip
-        .style("opacity", 1)
-        .style("left", `${event.pageX + 10}px`)
-        .style("top", `${event.pageY - 10}px`)
-        .html(
-          `
-          <div class="text-sm">
-            <div class="font-medium mb-1">${d.title}</div>
-            <div>Retrieved: <span class="font-medium">${d.count} times</span></div>
-            <div>Avg Similarity: <span class="font-medium">${d.avgSimilarity.toFixed(3)}</span></div>
-          </div>
-        `
-        );
-    };
-
-    const hideTooltip = () => {
-      if (!tooltipRef.current) return;
-      d3.select(tooltipRef.current).style("opacity", 0);
-    };
-
-    // Draw bars
-    g.selectAll("rect")
-      .data(documentStats)
-      .join("rect")
-      .attr("x", 0)
-      .attr("y", (d) => yScale(d.title) || 0)
-      .attr("width", (d) => xScale(d.count))
-      .attr("height", yScale.bandwidth())
-      .attr("fill", (d) => colorScale(d.avgSimilarity))
-      .attr("stroke", (d) => (selectedDocument === d.title ? "#000" : "#fff"))
-      .attr("stroke-width", (d) => (selectedDocument === d.title ? 3 : 1))
-      .attr("opacity", (d) => {
-        // If a document is selected, hide others; otherwise show all
-        if (selectedDocument === null) return 0.8;
-        return selectedDocument === d.title ? 1 : 0.15;
-      })
-      .style("cursor", onDocumentClick ? "pointer" : "default")
-      .on("mouseover", function (event, d) {
-        d3.select(this).attr("opacity", 1);
-        showTooltip(event as MouseEvent, d);
-      })
-      .on("mouseout", function () {
-        d3.select(this).attr("opacity", 0.8);
-        hideTooltip();
-      })
-      .on("click", (event, d) => {
-        if (onDocumentClick) {
-          event.stopPropagation();
-          onDocumentClick(d.title);
-        }
+  const handleDocumentClick = (doc: DocumentFingerprint) => {
+    setActiveChunk({ docTitle: doc.title, chunk: null });
+    if (onChunkSelect) {
+      const allRunIds = new Set(doc.chunks.flatMap((chunk) => chunk.runIds));
+      onChunkSelect({
+        runIds: allRunIds,
+        chunkKey: null,
+        docTitle: doc.title,
+        chunkIndex: null,
       });
+    }
+  };
 
-    // Add count labels at end of bars
-    g.selectAll("text.count-label")
-      .data(documentStats)
-      .join("text")
-      .attr("class", "count-label")
-      .attr("x", (d) => xScale(d.count) + 5)
-      .attr("y", (d) => (yScale(d.title) || 0) + yScale.bandwidth() / 2)
-      .attr("dy", "0.35em")
-      .style("font-size", "10px")
-      .style("fill", "#4b5563")
-      .attr("opacity", (d) => {
-        if (selectedDocument === null) return 1;
-        return selectedDocument === d.title ? 1 : 0.15;
-      })
-      .text((d) => d.count);
-
-    // Add legend for color scale
-    const legendWidth = 200;
-    const legendHeight = 10;
-    const legendG = svg
-      .append("g")
-      .attr("class", "legend")
-      .attr("transform", `translate(${margin.left + width - legendWidth}, ${height + margin.top + 35})`);
-
-    // Create gradient for legend
-    const defs = svg.append("defs");
-    const linearGradient = defs
-      .append("linearGradient")
-      .attr("id", "similarity-gradient")
-      .attr("x1", "0%")
-      .attr("y1", "0%")
-      .attr("x2", "100%")
-      .attr("y2", "0%");
-
-    linearGradient
-      .selectAll("stop")
-      .data(d3.range(0, 1.1, 0.1))
-      .join("stop")
-      .attr("offset", (d) => `${d * 100}%`)
-      .attr("stop-color", (d) => colorScale(d));
-
-    legendG
-      .append("rect")
-      .attr("width", legendWidth)
-      .attr("height", legendHeight)
-      .style("fill", "url(#similarity-gradient)");
-
-    legendG
-      .append("text")
-      .attr("x", 0)
-      .attr("y", -5)
-      .style("font-size", "10px")
-      .text("Low Similarity");
-
-    legendG
-      .append("text")
-      .attr("x", legendWidth)
-      .attr("y", -5)
-      .attr("text-anchor", "end")
-      .style("font-size", "10px")
-      .text("High Similarity");
-  }, [documentStats, dimensions, selectedDocument, onDocumentClick]);
-
-  // Handle resize
-  useEffect(() => {
-    const handleResize = () => {
-      if (svgRef.current) {
-        const parent = svgRef.current.parentElement;
-        if (parent) {
-          setDimensions({
-            width: parent.clientWidth,
-            height: Math.max(400, documentStats.length * 30 + 100),
-          });
-        }
-      }
-    };
-
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [documentStats.length]);
+  const visibleActiveChunk = activeChunkKey
+    ? activeChunk?.chunk?.key === activeChunkKey
+      ? activeChunk
+      : null
+    : activeChunk;
 
   return (
-    <div className="relative w-full">
-      <svg ref={svgRef} className="w-full" />
+    <div className="relative w-full" ref={containerRef}>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="text-lg font-semibold">Document Fingerprint (White → Red)</h3>
+          <p className="text-sm text-gray-600">
+            Sorted by Weighted Severity Index S = (Flags × {ALPHA}) + Poor LLM (&lt; {POOR_THRESHOLD}).
+          </p>
+          <p className="text-xs text-gray-500">
+            Priority: flags are ×{ALPHA}; LLM score &lt; {POOR_THRESHOLD} counts as a system failure.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Safe</span>
+            <div className="h-3 w-28 rounded-full bg-gradient-to-r from-white via-rose-100 to-rose-600 border border-rose-100" />
+            <span className="text-xs text-gray-500">Hotspot</span>
+          </div>
+          <div className="text-xs text-gray-500">Hover a chunk → preview. Click → lock & filter.</div>
+        </div>
+      </div>
+
+      {fingerprints.length === 0 && (
+        <div className="text-sm text-gray-600">Not enough retrieval data to build document fingerprints.</div>
+      )}
+
+      <div className="space-y-3">
+        {fingerprints.map((doc) => {
+          const isDocSelected = activeChunk?.docTitle === doc.title && !activeChunk.chunk;
+          const hasChunkSelected = activeChunk?.docTitle === doc.title && activeChunk.chunk;
+          const xScale = d3.scaleLinear().domain([0, doc.chunkCount]).range([0, barWidth]);
+
+          return (
+            <div
+              key={doc.title}
+              className={`rounded-lg border px-3 py-2 transition-colors ${isDocSelected
+                ? "border-rose-300 bg-rose-50/60"
+                : "border-gray-100 bg-white hover:border-gray-300 cursor-pointer"
+                }`}
+            >
+              <div
+                className="grid items-center gap-3"
+                style={{ gridTemplateColumns: `${LABEL_COLUMN}px ${barWidth}px` }}
+              >
+                <div className="space-y-1" onClick={() => handleDocumentClick(doc)}>
+                  <div className="text-left font-medium text-gray-900 truncate" title={doc.title}>
+                    {doc.title}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                    <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">
+                      Flags {doc.humanFlags}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">
+                      Poor LLM {doc.poorLLM}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
+                      Retrieved {doc.totalRetrievals}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <svg width={barWidth} height={rowHeight} className="overflow-visible">
+                    <rect
+                      x={0}
+                      y={rowHeight / 4}
+                      width={barWidth}
+                      height={rowHeight / 2}
+                      rx={8}
+                      fill="#f8fafc"
+                      stroke="#e5e7eb"
+                    />
+                    {doc.chunks.map((chunk) => {
+                      const x = xScale(chunk.index);
+                      const width = Math.min(
+                        Math.max(xScale(chunk.index + 1) - xScale(chunk.index), MIN_SEGMENT_WIDTH),
+                        barWidth - x
+                      );
+                      const isActive = activeChunk?.chunk?.key === chunk.key;
+                      const opacity = hasChunkSelected && !isActive ? 0.35 : 1;
+
+                      return (
+                        <rect
+                          key={chunk.key}
+                          x={x}
+                          y={rowHeight / 4}
+                          width={width}
+                          height={rowHeight / 2}
+                          rx={4}
+                          fill={colorForChunk(chunk)}
+                          opacity={opacity}
+                          className={`cursor-pointer transition-transform duration-150 ease-in-out hover:translate-y-[-1px] ${isActive ? "ring-2 ring-rose-400" : ""}`}
+                          onMouseEnter={(event) => showTooltip(event, doc.title, chunk)}
+                          onMouseLeave={hideTooltip}
+                          onClick={() => handleChunkClick(doc.title, chunk)}
+                        />
+                      );
+                    })}
+                  </svg>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {visibleActiveChunk && (
+        <div className="mt-5 border-t pt-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-gray-900">
+                {visibleActiveChunk.chunk
+                  ? `${visibleActiveChunk.docTitle} · Chunk #${visibleActiveChunk.chunk.index + 1}`
+                  : `${visibleActiveChunk.docTitle} (All Chunks)`}
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveChunk(null)}
+              className="text-xs text-gray-500 hover:text-gray-800"
+            >
+              Close
+            </button>
+          </div>
+          {visibleActiveChunk.chunk && (
+            <>
+              <p
+                className="mt-2 text-sm leading-relaxed text-gray-800"
+                title={visibleActiveChunk.chunk.text || "No chunk text available"}
+              >
+                {truncate(visibleActiveChunk.chunk.text)}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-700">
+                <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800">
+                  Flags {visibleActiveChunk.chunk.flags}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800">
+                  Poor LLM {visibleActiveChunk.chunk.poor}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-800">
+                  Seen in {visibleActiveChunk.chunk.runs} runs
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-800">
+                  Questions {visibleActiveChunk.chunk.questions}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div
         ref={tooltipRef}
-        className="absolute pointer-events-none bg-white border border-gray-300 rounded-lg shadow-lg p-3 opacity-0 transition-opacity duration-200"
-        style={{ zIndex: 1000 }}
+        className="fixed pointer-events-none bg-white border border-gray-300 rounded-lg shadow-lg p-3 opacity-0 transition-opacity duration-150 max-w-xs"
+        style={{ zIndex: 9999, display: "none" }}
       />
     </div>
   );

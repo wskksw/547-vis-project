@@ -35,18 +35,45 @@ The visualization system transforms raw question-answer data into interactive vi
 - Click bin → filter to that score range
 - Hover → tooltip with count and percentage
 
-### 3. Document Usage Chart (`DocumentUsageChart.tsx`)
-**What**: Horizontal bar chart of document retrieval frequency.
+### 3. Document Fingerprint Chart (`DocumentUsageChart.tsx`)
+**What**: Compact visualization showing chunk-level quality patterns within each document, styled as a "fingerprint" with continuous color encoding.
 
 **Visual Encodings**:
-- **x-position**: Retrieval count
-- **y-position**: Document title (sorted by count)
-- **color**: Average similarity when retrieved (gradient)
-- **bar height**: Fixed
+- **Document-level layout**: Each document is a horizontal row
+- **Chunk position (x-axis)**: Sequential chunk index within document (chunk 0, 1, 2...)
+- **Chunk color**: Continuous gradient from white (#f8fafc) → red (via `d3.interpolateReds`)
+  - White/near-white: Safe chunks (severity = 0 or very low)
+  - Light rose: Moderate issues (low severity)
+  - Deep red: Critical hotspots (high severity)
+  - Color intensity = `severity / maxChunkSeverity` normalized (0.1 to 1.0 range in interpolateReds)
+- **Severity calculation**: Weighted sum per chunk: `(Flags × 10) + Poor LLM Count`
+  - Human flags weighted ×10 (ALPHA) to prioritize user-identified issues
+  - Poor LLM = runs with LLM score < 0.4 (system failure threshold)
+- **Document sorting**: Descending by weighted severity, then flags, then retrieval count
+
+**Metadata badges** (per document):
+- **Flags**: Count of unique questions with human flags when this doc was retrieved
+- **Poor LLM**: Count of unique questions with LLM score < 0.4
+- **Retrieved**: Total retrieval count across all runs
 
 **Interactions**:
-- Click bar → filter to runs using that document
-- Hover → tooltip with stats
+- **Hover chunk** → Fixed-position tooltip shows:
+  - Document title + chunk index
+  - Actual chunk text (truncated to 120 chars)
+  - Flags, Poor LLM count, Runs count
+- **Click document title** → Filter to all chunks in that document (document-level selection)
+- **Click individual chunk** → Filter to only that specific chunk (chunk-level selection, document dehighlighted)
+- **Subsequent clicks** → Replace previous selection (no cumulative filtering)
+- **Selection feedback**: 
+  - Selected document: rose border + rose background tint
+  - Selected chunk: 2px rose ring around segment
+  - Non-selected chunks (when one is selected): 35% opacity
+
+**Layout Constants**:
+- `LABEL_COLUMN = 280px`: Fixed width for document titles and badges
+- `MIN_SEGMENT_WIDTH = 6px`: Minimum visible chunk width
+- `rowHeight = 32px`: Fixed height per document row
+- Dynamic bar width: Fills remaining horizontal space (min 360px)
 
 ## Data Flow
 
@@ -79,18 +106,22 @@ All three views are linked via the `OverviewDashboard` component:
 
 1. **Brush selection** in scatterplot → highlights in all views
 2. **Bin click** in histogram → filters all views to score range
-3. **Document click** in bar chart → filters to runs using that doc
+3. **Document/chunk click** in fingerprint chart → filters based on selection level:
+   - Document-level: All runs that retrieved any chunk from that document
+   - Chunk-level: Only runs that retrieved that specific chunk
 
-Filter state is managed via React `useState` and passed down as props.
+Filter state is managed via React `useState` and passed down as props. Each new selection replaces the previous one (non-cumulative filtering for simplicity).
 
 ## D3.js Usage
 
 Every component uses D3.js v7 for:
 - **Scales**: `d3.scaleLinear()`, `d3.scaleBand()`, `d3.scaleSequential()`
 - **Axes**: `d3.axisBottom()`, `d3.axisLeft()`
-- **Color**: `d3.interpolateRdYlGn` (colorblind-safe)
+- **Color**: 
+  - Scatterplot & Histograms: `d3.interpolateRdYlGn` (colorblind-safe diverging scale)
+  - Document Fingerprint: `d3.interpolateReds` (sequential scale, 0.1-1.0 range for continuous gradient)
 - **Data binding**: `.data().join()` pattern
-- **Interactions**: `d3.brush()` for selection
+- **Interactions**: `d3.brush()` for selection in scatterplot
 - **Binning**: `d3.bin()` for histograms
 
 ## Running the Visualization
@@ -126,38 +157,72 @@ http://localhost:3000/dashboard-viz
 - Color-coded bins provide pre-attentive assessment
 - Alternative considered: Box plots - rejected because they hide multimodality
 
-### Why Horizontal Bars?
-- Better for long document titles (vertical would be cramped)
-- Easy to compare lengths
-- Color gradient shows whether popular = relevant
-- Alternative considered: Treemap - rejected as overkill for simple counts
+### Why Document Fingerprint (not traditional bar chart)?
+**Design Goals**:
+- **Chunk-level granularity**: Traditional document-level aggregation hides which specific chunks cause problems
+- **Pattern recognition**: Visual "fingerprint" makes problem documents instantly recognizable at a glance
+- **Severity prioritization**: Weighted scoring (Flags ×10) ensures human-identified issues rise to top
+
+**Visual Design Decisions**:
+
+1. **Continuous color gradient (white → red)**:
+   - **Rationale**: Severity is continuous, not categorical. Chunks exist on a spectrum from "safe" to "critical"
+   - **Color choice**: Red universally signals "danger/problem"; white = "clean/safe" is intuitive
+   - **D3 interpolation**: `d3.interpolateReds(0.1 + 0.9 * t)` provides perceptually uniform scaling
+   - **Why not green-to-red**: Green implies "good quality", but a chunk with 0 issues is neutral (not "good"), so white is more semantically accurate
+   - **Alternative rejected**: Categorical colors (e.g., 3-4 severity buckets) - loses nuance in severity differences
+
+2. **Horizontal layout (chunks as segments, not bars)**:
+   - **Rationale**: Preserves sequential chunk order (chunk 0, 1, 2...) which matters for understanding document structure
+   - **Space efficiency**: Can show 20-50 chunks per document in minimal vertical space
+   - **Alternative rejected**: Vertical bars per chunk - wastes space, loses sequential reading order
+
+3. **Sorting by severity**:
+   - **Rationale**: Puts worst problems at top (prioritizes developer attention)
+   - **Weighted formula**: `(Flags × 10) + Poor LLM` treats human flags as 10× more critical than system-detected issues
+   - **Why ×10**: Human flags indicate user-facing failures; LLM score < 0.4 indicates potential issues but not confirmed failures
+   - **Tie-breaking**: Falls back to retrieval count (frequently-used documents get priority)
+
+4. **Two-level selection** (document vs chunk):
+   - **Rationale**: Supports both exploratory ("which documents are problematic?") and diagnostic ("which specific chunk causes failures?") workflows
+   - **Click document title**: Broad filter to see all runs using any chunk from that document
+   - **Click individual chunk**: Narrow filter to see only runs using that exact chunk
+   - **Non-cumulative**: Each click replaces previous selection (reduces cognitive load vs. complex multi-select logic)
+
+5. **Opacity feedback** (35% for non-selected):
+   - **Rationale**: Maintains context (you can still see other chunks) while clearly showing focus
+   - **Alternative rejected**: Complete hide - loses spatial context and makes comparison harder
+
+6. **Minimal document-level metrics** (no per-doc severity badge):
+   - **Rationale**: Reduces visual clutter; severity is already encoded in color intensity of chunks
+   - **What's shown**: Flags, Poor LLM, and retrieval count - actionable metrics that aren't redundant with visual encoding
+
+7. **Fixed tooltip with chunk text**:
+   - **Rationale**: Chunk segments are small (often 6-20px); tooltip provides detail-on-demand
+   - **Content choice**: Shows actual text (helps verify it's the right chunk), plus quantitative stats (flags, poor LLM, runs)
+   - **Positioning**: Fixed (not absolute) to prevent viewport clipping
+
+**Alternative Considered: Treemap**
+- **Rejected**: Loses sequential chunk order; harder to compare severity across documents; more complex visual encoding (both size and color)
+
+**Alternative Considered: Heatmap Matrix**
+- **Rejected**: Requires fixed grid (wastes space when documents have different chunk counts); harder to scan document names
+
+**Alternative Considered: Stacked Bar Chart**
+- **Rejected**: Implies additive relationship (chunks don't "stack" to a meaningful total); harder to see individual chunk severity
 
 ## Scalability
 
 Current design works well for 30-100 runs:
-- Scatterplot: Opacity prevents overlap, brush selects regions
-- Histograms: 10 bins handles any dataset size
-- Document chart: Shows top 15, sorted by frequency
+- **Scatterplot**: Opacity prevents overlap, brush selects regions
+- **Histograms**: 10 bins handles any dataset size
+- **Document fingerprint**: Shows all documents (sorted by severity), compact chunk representation
 
 For 1000+ runs (future):
 - Switch scatterplot to hexbin density
 - Add zoom/pan to document chart
 - Implement canvas rendering for performance
-
-## Accessibility
-
-- Colorblind-safe palettes (RdYlGn diverging scale)
-- Keyboard navigation support (TODO)
-- ARIA labels on axes (TODO)
-- Text alternatives for screen readers (TODO)
-
-## Next Steps
-
-1. Add keyboard navigation
-2. Implement deep-dive bipartite graph view
-3. Add export functionality (SVG download)
-4. Performance optimization for large datasets
-5. Mobile responsive design improvements
+- Add virtual scrolling for document list (show top 50, lazy-load rest)
 
 ## File Structure
 
@@ -177,24 +242,3 @@ app/
   dashboard-viz/
     page.tsx                     # Main dashboard page
 ```
-
-## Dependencies
-
-- `d3`: ^7.9.0
-- `@types/d3`: ^7.x (dev)
-- `react`: ^19.x
-- `next`: ^16.x
-
-## Contributing
-
-When adding new visualizations:
-1. Use the same data structure (`VizDataPoint`)
-2. Implement D3 scales, axes, and data binding
-3. Add coordinated filtering via props
-4. Include tooltips and hover states
-5. Follow the color scheme (RdYlGn for quality)
-6. Document visual encodings in comments
-
-## License
-
-Part of the 547-vis-project. See main README.

@@ -1,6 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+type RawRetrieval = {
+  id?: string;
+  score?: number;
+  text?: string;
+  documentTitle?: string;
+  index?: number;
+};
+
+type RawMetrics = {
+  harmfulWrong?: number;
+  userScore?: number;
+};
+
+type RawConfig = {
+  model?: string;
+  topK?: number;
+};
+
 export type VizDataPoint = {
   runId: string;
   questionId: string;
@@ -14,6 +32,9 @@ export type VizDataPoint = {
   retrievedDocs: Array<{
     title: string;
     score: number;
+    index?: number;
+    text?: string;
+    chunkId?: string;
   }>;
 };
 
@@ -27,30 +48,23 @@ export async function GET() {
     });
 
     const dataPoints: VizDataPoint[] = answers.map((answer) => {
-      // Parse retrievals
-      let retrievals: any[] = [];
-      if (answer.retrievals && typeof answer.retrievals === 'object') {
-        if (Array.isArray(answer.retrievals)) {
-          retrievals = answer.retrievals;
-        }
-      }
+      const retrievals: RawRetrieval[] = Array.isArray(answer.retrievals)
+        ? (answer.retrievals as RawRetrieval[])
+        : [];
 
       // Calculate avg similarity
       let avgSimilarity = 0;
       if (retrievals.length > 0) {
-        const totalScore = retrievals.reduce((sum, r) => sum + (r.score || 0), 0);
+        const totalScore = retrievals.reduce((sum, r) => sum + (r.score ?? 0), 0);
         avgSimilarity = totalScore / retrievals.length;
       }
 
       // Parse metrics for flags
-      let metrics: any = {};
-      if (answer.metrics && typeof answer.metrics === 'object') {
-        metrics = answer.metrics;
-      }
+      const metrics = (answer.metrics ?? {}) as RawMetrics;
       const isFlagged = metrics.harmfulWrong === 1 || metrics.userScore === -1;
 
       // Parse config
-      const config = (answer.config as any) || {};
+      const config = (answer.config ?? {}) as RawConfig;
 
       return {
         runId: answer.id,
@@ -60,11 +74,14 @@ export async function GET() {
         llmScore: answer.llmScore ?? 0,
         avgSimilarity,
         humanFlags: isFlagged ? 1 : 0,
-        configModel: config.model || "default",
-        configTopK: config.topK || retrievals.length,
-        retrievedDocs: retrievals.map((r: any) => ({
+        configModel: config.model ?? "default",
+        configTopK: config.topK ?? retrievals.length,
+        retrievedDocs: retrievals.map((r) => ({
           title: r.documentTitle || "Untitled",
           score: r.score || 0,
+          index: r.index ?? undefined,
+          text: typeof r.text === "string" ? r.text : undefined,
+          chunkId: r.id ?? undefined,
         })),
       };
     });

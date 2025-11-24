@@ -38,6 +38,53 @@ export type AnswerDetail = Answer & {
   question: Question;
 };
 
+export type RunConfig = {
+  id: string;
+  baseModel: string;
+  topK: number;
+  threshold: number;
+  systemPrompt?: string;
+  createdAt?: Date;
+};
+
+export type RunFeedback = {
+  id: string;
+  by: "human" | "nlp";
+  helpful: number | null;
+  correct: number | null;
+  relevant: number | null;
+  score: number | null;
+  notes?: string | null;
+};
+
+export type RunAnswer = {
+  id: string;
+  runId: string;
+  text: string;
+  trace?: string | null;
+};
+
+export type RunChunk = Chunk & { document: Document };
+
+export type RunRetrieval = {
+  id: string;
+  runId: string;
+  chunkId: string;
+  chunk: RunChunk;
+  score: number;
+};
+
+export type RunDetail = {
+  id: string;
+  questionId: string;
+  configId: string;
+  config: RunConfig;
+  createdAt: Date;
+  answer: RunAnswer | null;
+  retrievals: RunRetrieval[];
+  feedback: RunFeedback[];
+};
+
 export type MetricsRow = {
   runId: string;
   questionId: string;

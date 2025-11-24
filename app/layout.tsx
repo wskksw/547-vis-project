@@ -29,11 +29,8 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-zinc-50 antialiased`}
       >
         <div className="mx-auto flex min-h-screen max-w-6xl flex-col">
-          <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-4">
+          <header className="flex items-center justify-between border-b border-zinc-200 bg-white ">
             <div>
-              <p className="text-xs uppercase tracking-widest text-zinc-500">
-                547 · Instructor Tools
-              </p>
               <p className="text-lg font-semibold text-zinc-900">
                 RAG Diagnostics Dashboard
               </p>
