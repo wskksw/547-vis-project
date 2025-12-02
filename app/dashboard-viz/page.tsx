@@ -77,7 +77,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 px-4 pb-6 pt-4 sm:px-6 lg:px-8">
       <OverviewDashboard data={data} />
     </div>
   );

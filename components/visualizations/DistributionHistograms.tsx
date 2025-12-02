@@ -1,25 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import * as d3 from "d3";
 import type { VizDataPoint } from "@/app/api/viz/overview/route";
 
 type DistributionHistogramsProps = {
   data: VizDataPoint[];
+  activeRange?: [number, number] | null;
+  activeMetric?: "llm" | "similarity" | null;
+  viewMode?: "highlight" | "filter";
   onBinClick?: (metric: "llm" | "similarity", range: [number, number]) => void;
 };
 
 export function DistributionHistograms({
   data,
+  activeRange = null,
+  activeMetric = null,
+  viewMode = "filter",
   onBinClick,
 }: DistributionHistogramsProps) {
   const llmSvgRef = useRef<SVGSVGElement>(null);
   const simSvgRef = useRef<SVGSVGElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 400, height: 300 });
+  const [dimensions, setDimensions] = useState({ width: 400, height: 200 });
 
   const renderHistogram = (
-    svgRef: React.RefObject<SVGSVGElement | null>,
+    svgRef: RefObject<SVGSVGElement | null>,
     values: number[],
     title: string,
     metric: "llm" | "similarity"
@@ -179,7 +186,12 @@ export function DistributionHistograms({
         const center = ((d.x0 ?? 0) + (d.x1 ?? 0)) / 2;
         return getBinColor(center);
       })
-      .attr("opacity", 0.8)
+      .attr("opacity", (d) => {
+        if (!activeRange || activeMetric !== metric || viewMode === "filter") return 0.8;
+        const overlapsRange =
+          (d.x0 ?? 0) < activeRange[1] && (d.x1 ?? 0) > activeRange[0];
+        return overlapsRange ? 0.95 : 0.25;
+      })
       .attr("stroke", "#fff")
       .attr("stroke-width", 1)
       .style("cursor", onBinClick ? "pointer" : "default")
@@ -208,7 +220,7 @@ export function DistributionHistograms({
     renderHistogram(llmSvgRef, llmScores, "LLM-as-Judge Score Distribution", "llm");
     renderHistogram(simSvgRef, similarityScores, "Similarity Score Distribution", "similarity");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, dimensions]);
+  }, [data, dimensions, activeRange, activeMetric, viewMode]);
 
   // Handle resize
   useEffect(() => {
@@ -218,7 +230,7 @@ export function DistributionHistograms({
         if (parent) {
           setDimensions({
             width: parent.clientWidth,
-            height: 300,
+            height: 200,
           });
         }
       }
@@ -230,12 +242,14 @@ export function DistributionHistograms({
   }, []);
 
   return (
-    <div className="space-y-6">
-      <div className="w-full">
-        <svg ref={llmSvgRef} className="w-full" />
-      </div>
-      <div className="w-full">
-        <svg ref={simSvgRef} className="w-full" />
+    <div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="w-full">
+          <svg ref={llmSvgRef} className="w-full" />
+        </div>
+        <div className="w-full">
+          <svg ref={simSvgRef} className="w-full" />
+        </div>
       </div>
       <div
         ref={tooltipRef}

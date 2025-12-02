@@ -7,6 +7,8 @@ import type { VizDataPoint } from "@/app/api/viz/overview/route";
 type QualityScatterplotProps = {
   data: VizDataPoint[];
   selectedIds?: Set<string>;
+  highlightIds?: Set<string>;
+  viewMode?: "highlight" | "filter";
   onSelectionChange?: (selectedIds: Set<string>) => void;
   onPointClick?: (runId: string) => void;
 };
@@ -14,21 +16,21 @@ type QualityScatterplotProps = {
 export function QualityScatterplot({
   data,
   selectedIds = new Set(),
+  highlightIds = new Set(),
+  viewMode = "filter",
   onSelectionChange,
   onPointClick,
 }: QualityScatterplotProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [dimensions, setDimensions] = useState({ width: 800, height: 460 });
 
   useEffect(() => {
     if (!svgRef.current || data.length === 0) return;
 
-    const margin = { top: 40, right: 40, bottom: 60, left: 60 };
-    const width = dimensions.width - margin.left - margin.right;
+    const margin = { top: 12, right: 60, bottom: 44, left: 56 };
     const height = dimensions.height - margin.top - margin.bottom;
-
-    // Clear previous content
+    const width = dimensions.width - margin.left - margin.right;
     d3.select(svgRef.current).selectAll("*").remove();
 
     const svg = d3
@@ -87,18 +89,6 @@ export function QualityScatterplot({
       .style("font-weight", "500")
       .text("Average Similarity Score");
 
-    // Title
-    svg
-      .append("text")
-      .attr("class", "title")
-      .attr("x", margin.left + width / 2)
-      .attr("y", 20)
-      .attr("text-anchor", "middle")
-      .style("font-size", "16px")
-      .style("font-weight", "600")
-      .text("Quality Overview: LLM Score vs Document Similarity");
-
-    // Tooltip handlers
     const showTooltip = (event: MouseEvent, d: VizDataPoint) => {
       if (!tooltipRef.current) return;
 
@@ -136,20 +126,29 @@ export function QualityScatterplot({
       .attr("fill", (d) => colorScale(d.humanFlags))
       .attr("stroke", (d) => (selectedIds.has(d.runId) ? "#000" : "#fff"))
       .attr("stroke-width", (d) => (selectedIds.has(d.runId) ? 3 : 1))
-      .attr("opacity", 0.7)
+      .attr("opacity", (d) => {
+        if (viewMode === "highlight" && highlightIds.size > 0) {
+          return highlightIds.has(d.runId) ? 0.9 : 0.2;
+        }
+        return 0.7;
+      })
       .style("cursor", "pointer")
       .on("mouseover", function (event, d) {
         d3.select(this).attr("opacity", 1).attr("r", 10);
         showTooltip(event as MouseEvent, d);
       })
       .on("mouseout", function () {
-        d3.select(this).attr("opacity", 0.7).attr("r", 8);
+        const baseOpacity =
+          viewMode === "highlight" && highlightIds.size > 0
+            ? highlightIds.has((d3.select(this).datum() as VizDataPoint).runId)
+              ? 0.9
+              : 0.2
+            : 0.7;
+        d3.select(this).attr("opacity", baseOpacity).attr("r", 8);
         hideTooltip();
       })
       .on("click", (event, d) => {
         event.stopPropagation();
-
-        // Simple click to toggle selection
         if (onSelectionChange) {
           const newSelection = new Set(selectedIds);
           if (newSelection.has(d.runId)) {
@@ -159,20 +158,33 @@ export function QualityScatterplot({
           }
           onSelectionChange(newSelection);
         }
+        onPointClick?.(d.runId);
       });
 
-    // Click on background to clear selection
-    svg.on("click", () => {
-      if (onSelectionChange) {
-        onSelectionChange(new Set());
-      }
-    });
+    // Brushing for area selection
+    const brush = d3
+      .brush()
+      .extent([[0, 0], [width, height]])
+      .on("end", (event) => {
+        if (!onSelectionChange) return;
+        if (!event.selection) {
+          onSelectionChange(new Set());
+          return;
+        }
+        const [[x0, y0], [x1, y1]] = event.selection;
+        const ids = new Set<string>();
+        data.forEach((d) => {
+          const x = xScale(d.llmScore);
+          const y = yScale(d.avgSimilarity);
+          if (x0 <= x && x <= x1 && y0 <= y && y <= y1) {
+            ids.add(d.runId);
+          }
+        });
+        onSelectionChange(ids);
+      });
 
-    // Update circle styles based on selection
-    circles
-      .attr("stroke", (d) => (selectedIds.has(d.runId) ? "#000" : "#fff"))
-      .attr("stroke-width", (d) => (selectedIds.has(d.runId) ? 3 : 1));
-  }, [data, dimensions, selectedIds, onSelectionChange, onPointClick]);
+    g.append("g").attr("class", "brush").call(brush);
+  }, [data, dimensions, selectedIds, highlightIds, viewMode, onSelectionChange, onPointClick]);
 
   // Handle resize
   useEffect(() => {
@@ -182,7 +194,7 @@ export function QualityScatterplot({
         if (parent) {
           setDimensions({
             width: parent.clientWidth,
-            height: 600,
+            height: 460,
           });
         }
       }

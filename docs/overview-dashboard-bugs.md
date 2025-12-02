@@ -1,0 +1,6 @@
+# Overview Page Bug Notes (no code changes yet)
+
+- `components/visualizations/QualityScatterplot.tsx`: The UI copy says “Click and drag to select a region,” but the chart only toggles selection on point click—no brush. The `onPointClick` prop is never used, so clicking a point can’t open a question, and clicks outside the plot clear selection without respecting that intent.
+- `components/visualizations/DistributionHistograms.tsx`: Filtering uses `< range[1]`; values at the upper edge of the last bin (e.g., 1.0) can be dropped from the filter. Bin thresholds also assume contiguous scores; sparse ranges yield wide empty space.
+- `components/visualizations/DocumentUsageChart.tsx`: Chunk x-scale uses `chunkCount` derived from max index; sparse or missing indices make most chunks very narrow while consuming lots of horizontal space, and doc grouping keys on title (collisions if titles repeat). Active chunk state is local only, so an external `activeChunkKey` highlight gets cleared on any click.
+- `components/OverviewDashboard.tsx`: Selecting a chunk calls `setSelectedRunIds` and clears `scoreFilter`, but clearing the chunk chip also clears run selection, which can surprise users who wanted to keep the run highlight. Clear-all logic doesn’t restore the “highlight vs filter” distinction since only hard filters exist today.
