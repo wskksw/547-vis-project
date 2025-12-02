@@ -5,10 +5,8 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import * as d3 from "d3";
 import type { VizDataPoint } from "@/app/api/viz/overview/route";
 
-const ALPHA = 10; // Criticality multiplier for human flags
 const POOR_THRESHOLD = 0.4;
 const MIN_SEGMENT_WIDTH = 6;
-const LABEL_COLUMN = 280;
 
 type ChunkAggregate = {
   key: string;
@@ -50,6 +48,10 @@ type DocumentUsageChartProps = {
   data: VizDataPoint[];
   activeChunkKey?: string | null;
   onChunkSelect?: (payload: { runIds: Set<string>; chunkKey: string | null; docTitle: string; chunkIndex: number | null }) => void;
+  highlightedRunIds?: Set<string>;
+  viewMode?: "highlight" | "filter";
+  sortBy?: "severity" | "flags" | "poor" | "retrieved";
+  severityWeight?: number;
 };
 
 const truncate = (text: string, limit = 150) => {
@@ -61,16 +63,28 @@ export function DocumentUsageChart({
   data,
   activeChunkKey = null,
   onChunkSelect,
+  highlightedRunIds = new Set(),
+  viewMode = "filter",
+  sortBy = "severity",
+  severityWeight = 10,
 }: DocumentUsageChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(960);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [activeChunk, setActiveChunk] = useState<{ docTitle: string; chunk: ChunkAggregate | null } | null>(null);
 
   // Track container width so chunk positions map to actual pixels
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
+
+    const measure = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width !== containerWidth) {
+        setContainerWidth(rect.width);
+      }
+    };
+    measure();
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -159,14 +173,14 @@ export function DocumentUsageChart({
             questions: chunk.questionIds.size,
             runs: chunk.runIds.size,
             runIds: Array.from(chunk.runIds),
-            severity: chunk.flags * ALPHA + chunk.poor,
+            severity: chunk.flags * severityWeight + chunk.poor,
           }))
           .sort((a, b) => a.index - b.index);
 
         const chunkCount = doc.maxIndex >= 0 ? doc.maxIndex + 1 : Math.max(chunks.length, 1);
         const humanFlags = doc.flaggedQuestions.size;
         const poorLLM = doc.poorQuestions.size;
-        const severity = humanFlags * ALPHA + poorLLM;
+        const severity = humanFlags * severityWeight + poorLLM;
 
         return {
           title: doc.title,
@@ -179,11 +193,23 @@ export function DocumentUsageChart({
         };
       })
       .sort((a, b) => {
+        if (sortBy === "flags") {
+          if (b.humanFlags !== a.humanFlags) return b.humanFlags - a.humanFlags;
+          return b.totalRetrievals - a.totalRetrievals;
+        }
+        if (sortBy === "poor") {
+          if (b.poorLLM !== a.poorLLM) return b.poorLLM - a.poorLLM;
+          return b.totalRetrievals - a.totalRetrievals;
+        }
+        if (sortBy === "retrieved") {
+          if (b.totalRetrievals !== a.totalRetrievals) return b.totalRetrievals - a.totalRetrievals;
+          return b.severity - a.severity;
+        }
         if (b.severity !== a.severity) return b.severity - a.severity;
         if (b.humanFlags !== a.humanFlags) return b.humanFlags - a.humanFlags;
         return b.totalRetrievals - a.totalRetrievals;
       });
-  }, [data]);
+  }, [data, sortBy, severityWeight]);
 
   const maxChunkSeverity = useMemo(() => {
     const maxVal = Math.max(
@@ -193,8 +219,9 @@ export function DocumentUsageChart({
     return Math.max(1, maxVal);
   }, [fingerprints]);
 
-  const barWidth = Math.max(containerWidth - LABEL_COLUMN - 32, 360);
-  const rowHeight = 32;
+  const baseWidth = containerWidth || 800;
+  const barWidth = Math.max(baseWidth - 28, 240);
+  const rowHeight = 28;
 
   const colorForChunk = (chunk: ChunkAggregate) => {
     if (chunk.severity <= 0) return "#f8fafc";
@@ -263,23 +290,20 @@ export function DocumentUsageChart({
 
   return (
     <div className="relative w-full" ref={containerRef}>
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-lg font-semibold">Document Fingerprint (White → Red)</h3>
-          <p className="text-sm text-gray-600">
-            Sorted by Weighted Severity Index S = (Flags × {ALPHA}) + Poor LLM (&lt; {POOR_THRESHOLD}).
-          </p>
-          <p className="text-xs text-gray-500">
-            Priority: flags are ×{ALPHA}; LLM score &lt; {POOR_THRESHOLD} counts as a system failure.
+          <h3 className="text-base font-semibold">Document Fingerprint (White → Red)</h3>
+          <p className="text-xs text-gray-600">
+            Weighted Severity Index S = (Flags × {severityWeight}) + Poor LLM (&lt; {POOR_THRESHOLD}).
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Safe</span>
-            <div className="h-3 w-28 rounded-full bg-gradient-to-r from-white via-rose-100 to-rose-600 border border-rose-100" />
-            <span className="text-xs text-gray-500">Hotspot</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-gray-500">Safe</span>
+            <div className="h-3 w-24 rounded-full bg-gradient-to-r from-white via-rose-100 to-rose-600 border border-rose-100" />
+            <span className="text-[11px] text-gray-500">Hotspot</span>
           </div>
-          <div className="text-xs text-gray-500">Hover a chunk → preview. Click → lock & filter.</div>
+          <div className="text-[11px] text-gray-500">Hover a chunk → preview. Click → lock & filter.</div>
         </div>
       </div>
 
@@ -287,7 +311,7 @@ export function DocumentUsageChart({
         <div className="text-sm text-gray-600">Not enough retrieval data to build document fingerprints.</div>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {fingerprints.map((doc) => {
           const isDocSelected = activeChunk?.docTitle === doc.title && !activeChunk.chunk;
           const hasChunkSelected = activeChunk?.docTitle === doc.title && activeChunk.chunk;
@@ -296,71 +320,81 @@ export function DocumentUsageChart({
           return (
             <div
               key={doc.title}
-              className={`rounded-lg border px-3 py-2 transition-colors ${isDocSelected
+              className={`rounded-md border px-2.5 py-1.5 transition-colors ${isDocSelected
                 ? "border-rose-300 bg-rose-50/60"
                 : "border-gray-100 bg-white hover:border-gray-300 cursor-pointer"
                 }`}
+              style={{
+                opacity: viewMode === "highlight" && highlightedRunIds.size > 0
+                  ? doc.chunks.some((chunk) => chunk.runIds.some((id) => highlightedRunIds.has(id))) ? 1 : 0.35
+                  : 1
+              }}
             >
-              <div
-                className="grid items-center gap-3"
-                style={{ gridTemplateColumns: `${LABEL_COLUMN}px ${barWidth}px` }}
-              >
-                <div className="space-y-1" onClick={() => handleDocumentClick(doc)}>
-                  <div className="text-left font-medium text-gray-900 truncate" title={doc.title}>
-                    {doc.title}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
-                    <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">
-                      Flags {doc.humanFlags}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">
-                      Poor LLM {doc.poorLLM}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
-                      Retrieved {doc.totalRetrievals}
-                    </span>
-                  </div>
+              <div className="flex flex-wrap items-center gap-2 mb-1.5 min-w-0" onClick={() => handleDocumentClick(doc)}>
+                <div className="text-left text-sm font-medium text-gray-900 truncate min-w-0" title={doc.title}>
+                  {doc.title}
                 </div>
-
-                <div className="relative">
-                  <svg width={barWidth} height={rowHeight} className="overflow-visible">
-                    <rect
-                      x={0}
-                      y={rowHeight / 4}
-                      width={barWidth}
-                      height={rowHeight / 2}
-                      rx={8}
-                      fill="#f8fafc"
-                      stroke="#e5e7eb"
-                    />
-                    {doc.chunks.map((chunk) => {
-                      const x = xScale(chunk.index);
-                      const width = Math.min(
-                        Math.max(xScale(chunk.index + 1) - xScale(chunk.index), MIN_SEGMENT_WIDTH),
-                        barWidth - x
-                      );
-                      const isActive = activeChunk?.chunk?.key === chunk.key;
-                      const opacity = hasChunkSelected && !isActive ? 0.35 : 1;
-
-                      return (
-                        <rect
-                          key={chunk.key}
-                          x={x}
-                          y={rowHeight / 4}
-                          width={width}
-                          height={rowHeight / 2}
-                          rx={4}
-                          fill={colorForChunk(chunk)}
-                          opacity={opacity}
-                          className={`cursor-pointer transition-transform duration-150 ease-in-out hover:translate-y-[-1px] ${isActive ? "ring-2 ring-rose-400" : ""}`}
-                          onMouseEnter={(event) => showTooltip(event, doc.title, chunk)}
-                          onMouseLeave={hideTooltip}
-                          onClick={() => handleChunkClick(doc.title, chunk)}
-                        />
-                      );
-                    })}
-                  </svg>
+                <div className="flex items-center gap-1 text-[11px] text-gray-600 flex-shrink-0">
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">
+                    Flags {doc.humanFlags}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">
+                    Poor LLM {doc.poorLLM}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
+                    Retrieved {doc.totalRetrievals}
+                  </span>
                 </div>
+              </div>
+
+              <div className="relative">
+                <svg width={barWidth} height={rowHeight} className="overflow-visible">
+                  <rect
+                    x={0}
+                    y={rowHeight / 4}
+                    width={barWidth}
+                    height={rowHeight / 2}
+                    rx={8}
+                    fill="#f8fafc"
+                    stroke="#e5e7eb"
+                  />
+                  {doc.chunks.map((chunk) => {
+                    const x = xScale(chunk.index);
+                    const width = Math.min(
+                      Math.max(xScale(chunk.index + 1) - xScale(chunk.index), MIN_SEGMENT_WIDTH),
+                      barWidth - x
+                    );
+                    const isActive = activeChunk?.chunk?.key === chunk.key;
+                    const chunkMatchesHighlight =
+                      highlightedRunIds.size === 0
+                        ? true
+                        : chunk.runIds.some((id) => highlightedRunIds.has(id));
+                    const baseOpacity = hasChunkSelected && !isActive ? 0.35 : 1;
+                    const opacity =
+                      viewMode === "highlight" && highlightedRunIds.size > 0
+                        ? chunkMatchesHighlight
+                          ? baseOpacity
+                          : 0.15
+                        : baseOpacity;
+
+                    return (
+                      <rect
+                        key={chunk.key}
+                        x={x}
+                        y={rowHeight / 4}
+                        width={width}
+                        height={rowHeight / 2}
+                        rx={4}
+                        fill={colorForChunk(chunk)}
+                        opacity={opacity}
+                        className={`cursor-pointer transition-transform duration-150 ease-in-out hover:translate-y-[-1px] ${isActive ? "ring-2 ring-rose-400" : ""}`}
+                        onMouseEnter={(event) => showTooltip(event, doc.title, chunk)}
+                        onMouseLeave={hideTooltip}
+                        onClick={() => handleChunkClick(doc.title, chunk)}
+                      />
+                    );
+                  })}
+                </svg>
               </div>
             </div>
           );
@@ -368,8 +402,8 @@ export function DocumentUsageChart({
       </div>
 
       {visibleActiveChunk && (
-        <div className="mt-5 border-t pt-4">
-          <div className="flex items-start justify-between gap-3">
+        <div className="mt-4 border-t pt-3">
+          <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-sm font-semibold text-gray-900">
                 {visibleActiveChunk.chunk

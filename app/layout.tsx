@@ -28,7 +28,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-zinc-50 antialiased`}
       >
-        <div className="mx-auto flex min-h-screen max-w-6xl flex-col">
+        <div className="mx-auto flex min-h-screen max-w-[1400px] flex-col px-4 sm:px-6 lg:px-8">
           <header className="flex items-center justify-between border-b border-zinc-200 bg-white ">
             <div>
               <p className="text-lg font-semibold text-zinc-900">

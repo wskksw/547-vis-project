@@ -17,44 +17,60 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     docTitle: string;
     chunkIndex: number;
   } | null>(null);
+  const [viewMode, setViewMode] = useState<"highlight" | "filter">("highlight");
+  const [sortBy, setSortBy] = useState<"severity" | "flags" | "poor" | "retrieved">("severity");
+  const [severityWeight, setSeverityWeight] = useState<number>(10);
   const [scoreFilter, setScoreFilter] = useState<{
     metric: "llm" | "similarity";
     range: [number, number];
   } | null>(null);
 
-  // Apply filters to get filtered data
   const filteredData = useMemo(() => {
-    let result = data;
+    if (viewMode === "highlight") {
+      return data;
+    }
 
-    // Filter by selected runs from scatterplot brush
+    let result = data;
     if (selectedRunIds.size > 0) {
       result = result.filter((d) => selectedRunIds.has(d.runId));
     }
-
-    // Filter by score range from histogram click
     if (scoreFilter) {
       result = result.filter((d) => {
         const value = scoreFilter.metric === "llm" ? d.llmScore : d.avgSimilarity;
-        return value >= scoreFilter.range[0] && value < scoreFilter.range[1];
+        const upperInclusive = scoreFilter.range[1] >= 1 ? value <= scoreFilter.range[1] : value < scoreFilter.range[1];
+        return value >= scoreFilter.range[0] && upperInclusive;
       });
     }
-
     return result;
-  }, [data, selectedRunIds, scoreFilter]);
+  }, [data, selectedRunIds, scoreFilter, viewMode]);
+
+  const scoreHighlightIds = useMemo(() => {
+    if (!scoreFilter) return null;
+    const ids = new Set<string>();
+    data.forEach((d) => {
+      const value = scoreFilter.metric === "llm" ? d.llmScore : d.avgSimilarity;
+      const upperInclusive = scoreFilter.range[1] >= 1 ? value <= scoreFilter.range[1] : value < scoreFilter.range[1];
+      if (value >= scoreFilter.range[0] && upperInclusive) {
+        ids.add(d.runId);
+      }
+    });
+    return ids;
+  }, [data, scoreFilter]);
+
+  const combinedHighlightIds = useMemo(() => {
+    const ids = new Set<string>();
+    selectedRunIds.forEach((id) => ids.add(id));
+    scoreHighlightIds?.forEach((id) => ids.add(id));
+    return ids;
+  }, [selectedRunIds, scoreHighlightIds]);
 
   const handleBrushSelection = (ids: Set<string>) => {
     setSelectedRunIds(ids);
-    // Clear other filters when brushing
-    if (ids.size > 0) {
-      setSelectedChunk(null);
-      setScoreFilter(null);
-    }
+    setSelectedChunk(null);
   };
 
   const handleBinClick = (metric: "llm" | "similarity", range: [number, number]) => {
     setScoreFilter({ metric, range });
-    // Clear other filters when clicking histogram
-    setSelectedRunIds(new Set());
     setSelectedChunk(null);
   };
 
@@ -86,13 +102,31 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     selectedRunIds.size > 0 || selectedChunk !== null || scoreFilter !== null;
 
   return (
-    <div className="space-y-6">
-      {/* Header with filter status */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-600 mt-1">
-            Showing {filteredData.length} of {data.length} runs
-          </p>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-gray-700">
+            {viewMode === "filter" ? (
+              <>Showing {filteredData.length} of {data.length} runs</>
+            ) : (
+              <>Highlighting across {data.length} runs</>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-gray-600">
+            <span className="font-semibold text-gray-800">Mode</span>
+            <button
+              onClick={() => setViewMode("highlight")}
+              className={`rounded-full px-3 py-1 border text-xs ${viewMode === "highlight" ? "bg-blue-600 text-white border-blue-700" : "border-gray-300 text-gray-700 hover:border-gray-400"}`}
+            >
+              Highlight
+            </button>
+            <button
+              onClick={() => setViewMode("filter")}
+              className={`rounded-full px-3 py-1 border text-xs ${viewMode === "filter" ? "bg-blue-600 text-white border-blue-700" : "border-gray-300 text-gray-700 hover:border-gray-400"}`}
+            >
+              Filter
+            </button>
+          </div>
         </div>
         {filteredData.length === 1 && (
           <button
@@ -162,46 +196,73 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
         </div>
       )}
 
-      {/* Visualization grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-6">
-        {/* Left column: Scatterplot */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <QualityScatterplot
-            data={filteredData}
-            selectedIds={selectedRunIds}
-            onSelectionChange={handleBrushSelection}
-            onPointClick={handlePointClick}
-          />
+      <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1.1fr] gap-3 items-start">
+        <div className="space-y-3">
+          <div className="bg-white rounded-lg border border-gray-200 p-3">
+            <QualityScatterplot
+              data={filteredData}
+              selectedIds={selectedRunIds}
+              highlightIds={combinedHighlightIds}
+              onSelectionChange={handleBrushSelection}
+              onPointClick={handlePointClick}
+              viewMode={viewMode}
+            />
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-3">
+            <DistributionHistograms
+              data={filteredData}
+              activeRange={scoreFilter?.range ?? null}
+              activeMetric={scoreFilter?.metric ?? null}
+              viewMode={viewMode}
+              onBinClick={handleBinClick}
+            />
+          </div>
         </div>
 
-        {/* Right column: Histograms */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <DistributionHistograms
-            data={filteredData}
-            onBinClick={handleBinClick}
+        <div className="bg-white rounded-lg border border-gray-200 p-2.5 sticky top-4 min-w-0 max-h-[calc(100vh-140px)] overflow-y-auto">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="text-sm font-semibold text-gray-800">Document Fingerprint</span>
+            <div className="flex items-center gap-1 text-xs text-gray-600">
+              <span className="font-semibold">Sort:</span>
+              {(["severity", "flags", "poor", "retrieved"] as const).map((key) => (
+                <button
+                  key={key}
+                  onClick={() => setSortBy(key)}
+                  className={`rounded-full px-2.5 py-1 border text-[11px] ${sortBy === key ? "bg-rose-600 text-white border-rose-700" : "border-gray-300 text-gray-700 hover:border-gray-400"}`}
+                >
+                  {key === "severity" ? "Severity" : key === "poor" ? "Poor LLM" : key === "retrieved" ? "Retrieved" : "Flags"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 mb-2 text-xs text-gray-700">
+            <span className="font-semibold text-gray-800">Severity weight</span>
+            <input
+              type="range"
+              min={5}
+              max={20}
+              step={1}
+              value={severityWeight}
+              onChange={(e) => setSeverityWeight(Number(e.target.value))}
+              className="w-32 accent-rose-600"
+              aria-label="Severity weight multiplier"
+            />
+            <span className="text-gray-800 font-medium">{severityWeight}× flags</span>
+          </div>
+
+          <DocumentUsageChart
+            data={viewMode === "filter" ? filteredData : data}
+            activeChunkKey={selectedChunk?.key ?? null}
+            onChunkSelect={handleChunkSelect}
+            highlightedRunIds={viewMode === "highlight" ? combinedHighlightIds : selectedRunIds}
+            viewMode={viewMode}
+            sortBy={sortBy}
+            severityWeight={severityWeight}
           />
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <DocumentUsageChart
-          data={filteredData}
-          activeChunkKey={selectedChunk?.key ?? null}
-          onChunkSelect={handleChunkSelect}
-        />
-      </div>
-
-      {/* Usage instructions */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 className="font-medium text-blue-900 mb-2">How to interact:</h3>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li>• <strong>Scatterplot</strong>: Click and drag to select a region and filter all views</li>
-          <li>• <strong>Histograms</strong>: Click a bar to filter by that score range</li>
-          <li>• <strong>Document Fingerprint</strong>: Hover for chunk text; click a hotspot to lock details and filter to runs that used that chunk</li>
-          <li>• <strong>Points</strong>: Click any point in the scatterplot to view the full question details</li>
-          <li>• Hover over any element for detailed information</li>
-        </ul>
-      </div>
     </div>
   );
 }
