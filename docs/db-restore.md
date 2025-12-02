@@ -11,12 +11,6 @@ This project uses `pgvector` for embeddings and `gen_random_uuid()` from `pgcryp
 createdb rag_viz
 ```
 
-### 3) Enable required extensions
-```bash
-psql postgresql://<user>:<pass>@<host>:<port>/rag_viz -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
-psql postgresql://<user>:<pass>@<host>:<port>/rag_viz -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
 ### 4) Restore from the dump
 From the repo root:
 ```bash
