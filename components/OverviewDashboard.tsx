@@ -13,36 +13,16 @@ type OverviewDashboardProps = {
 export function OverviewDashboard({ data }: OverviewDashboardProps) {
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [selectedChunk, setSelectedChunk] = useState<{
-    key: string;
+    key: string | null;
     docTitle: string;
-    chunkIndex: number;
+    chunkIndex: number | null;
   } | null>(null);
-  const [viewMode, setViewMode] = useState<"highlight" | "filter">("highlight");
   const [sortBy, setSortBy] = useState<"severity" | "flags" | "poor" | "retrieved">("severity");
   const [severityWeight, setSeverityWeight] = useState<number>(10);
   const [scoreFilter, setScoreFilter] = useState<{
     metric: "llm" | "similarity";
     range: [number, number];
   } | null>(null);
-
-  const filteredData = useMemo(() => {
-    if (viewMode === "highlight") {
-      return data;
-    }
-
-    let result = data;
-    if (selectedRunIds.size > 0) {
-      result = result.filter((d) => selectedRunIds.has(d.runId));
-    }
-    if (scoreFilter) {
-      result = result.filter((d) => {
-        const value = scoreFilter.metric === "llm" ? d.llmScore : d.avgSimilarity;
-        const upperInclusive = scoreFilter.range[1] >= 1 ? value <= scoreFilter.range[1] : value < scoreFilter.range[1];
-        return value >= scoreFilter.range[0] && upperInclusive;
-      });
-    }
-    return result;
-  }, [data, selectedRunIds, scoreFilter, viewMode]);
 
   const scoreHighlightIds = useMemo(() => {
     if (!scoreFilter) return null;
@@ -74,7 +54,7 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     setSelectedChunk(null);
   };
 
-  const handleChunkSelect = (payload: { runIds: Set<string>; chunkKey: string; docTitle: string; chunkIndex: number }) => {
+  const handleChunkSelect = (payload: { runIds: Set<string>; chunkKey: string | null; docTitle: string; chunkIndex: number | null }) => {
     setSelectedRunIds(payload.runIds);
     setSelectedChunk({
       key: payload.chunkKey,
@@ -92,65 +72,48 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
     }
   };
 
-  const clearFilters = () => {
+  const clearHighlights = () => {
     setSelectedRunIds(new Set());
     setSelectedChunk(null);
     setScoreFilter(null);
   };
 
-  const hasActiveFilters =
+  const hasActiveHighlights =
     selectedRunIds.size > 0 || selectedChunk !== null || scoreFilter !== null;
+
+  const singleSelectedRun =
+    selectedRunIds.size === 1
+      ? data.find((d) => d.runId === Array.from(selectedRunIds)[0]) ?? null
+      : null;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <div className="text-sm text-gray-700">
-            {viewMode === "filter" ? (
-              <>Showing {filteredData.length} of {data.length} runs</>
-            ) : (
-              <>Highlighting across {data.length} runs</>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-gray-600">
-            <span className="font-semibold text-gray-800">Mode</span>
-            <button
-              onClick={() => setViewMode("highlight")}
-              className={`rounded-full px-3 py-1 border text-xs ${viewMode === "highlight" ? "bg-blue-600 text-white border-blue-700" : "border-gray-300 text-gray-700 hover:border-gray-400"}`}
-            >
-              Highlight
-            </button>
-            <button
-              onClick={() => setViewMode("filter")}
-              className={`rounded-full px-3 py-1 border text-xs ${viewMode === "filter" ? "bg-blue-600 text-white border-blue-700" : "border-gray-300 text-gray-700 hover:border-gray-400"}`}
-            >
-              Filter
-            </button>
-          </div>
+          <div className="text-sm text-gray-700">Highlighting across {data.length} runs</div>
         </div>
-        {filteredData.length === 1 && (
+        {singleSelectedRun && (
           <button
             onClick={() => {
-              const single = filteredData[0];
-              if (single) window.location.href = `/question/${single.questionId}`;
+              window.location.href = `/question/${singleSelectedRun.questionId}`;
             }}
             className="px-4 py-2 text-sm bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-lg transition-colors"
           >
             Open Question
           </button>
         )}
-        {hasActiveFilters && (
+        {hasActiveHighlights && (
           <button
-            onClick={clearFilters}
+            onClick={clearHighlights}
             className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
           >
-            Clear All Filters
+            Clear Highlights
           </button>
         )}
       </div>
 
-      {/* Active filter chips */}
-      {hasActiveFilters && (
+      {/* Active highlight chips */}
+      {hasActiveHighlights && (
         <div className="flex flex-wrap gap-2">
           {selectedRunIds.size > 0 && (
             <div className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm flex items-center gap-2">
@@ -166,7 +129,9 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
           {selectedChunk && (
             <div className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm flex items-center gap-2">
               <span>
-                Chunk #{selectedChunk.chunkIndex + 1} · {selectedChunk.docTitle.slice(0, 30)}...
+                {selectedChunk.chunkIndex === null
+                  ? `${selectedChunk.docTitle.slice(0, 30)}...`
+                  : `Chunk #${selectedChunk.chunkIndex + 1} · ${selectedChunk.docTitle.slice(0, 30)}...`}
               </span>
               <button
                 onClick={() => {
@@ -200,21 +165,19 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
         <div className="space-y-3">
           <div className="bg-white rounded-lg border border-gray-200 p-3">
             <QualityScatterplot
-              data={filteredData}
+              data={data}
               selectedIds={selectedRunIds}
               highlightIds={combinedHighlightIds}
               onSelectionChange={handleBrushSelection}
               onPointClick={handlePointClick}
-              viewMode={viewMode}
             />
           </div>
 
           <div className="bg-white rounded-lg border border-gray-200 p-3">
             <DistributionHistograms
-              data={filteredData}
+              data={data}
               activeRange={scoreFilter?.range ?? null}
               activeMetric={scoreFilter?.metric ?? null}
-              viewMode={viewMode}
               onBinClick={handleBinClick}
             />
           </div>
@@ -252,11 +215,10 @@ export function OverviewDashboard({ data }: OverviewDashboardProps) {
           </div>
 
           <DocumentUsageChart
-            data={viewMode === "filter" ? filteredData : data}
+            data={data}
             activeChunkKey={selectedChunk?.key ?? null}
             onChunkSelect={handleChunkSelect}
-            highlightedRunIds={viewMode === "highlight" ? combinedHighlightIds : selectedRunIds}
-            viewMode={viewMode}
+            highlightedRunIds={combinedHighlightIds}
             sortBy={sortBy}
             severityWeight={severityWeight}
           />

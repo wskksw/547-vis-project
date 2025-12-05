@@ -19,8 +19,7 @@ The visualization system transforms raw question-answer data into interactive vi
 - **opacity**: 0.7
 
 **Interactions**:
-- Brush to select region → filters other views
-- Click point → navigate to question detail
+- Click point → navigate to question detail (also highlights; when a highlight set is active, only highlighted points remain clickable and are drawn on top)
 - Hover → tooltip with details
 
 ### 2. Distribution Histograms (`DistributionHistograms.tsx`)
@@ -32,7 +31,7 @@ The visualization system transforms raw question-answer data into interactive vi
 - **color**: Sequential light→dark blues (lowest scores = light slate, highest = deep blue)
 
 **Interactions**:
-- Click bin → filter to that score range
+- Click bin → highlight that score range across views
 - Hover → tooltip with count and percentage
 
 ### 3. Document Fingerprint Chart (`DocumentUsageChart.tsx`)
@@ -61,8 +60,8 @@ The visualization system transforms raw question-answer data into interactive vi
   - Document title + chunk index
   - Actual chunk text (truncated to 120 chars)
   - Flags, Poor LLM count, Runs count
-- **Click document title** → Filter to all chunks in that document (document-level selection)
-- **Click individual chunk** → Filter to only that specific chunk (chunk-level selection, document dehighlighted)
+- **Click document title** → Highlight all runs that retrieved any chunk from that document
+- **Click individual chunk** → Highlight runs that retrieved that specific chunk (chunk-level focus, document dehighlighted) and show a visible border on the active chunk
 - **Subsequent clicks** → Replace previous selection (no cumulative filtering)
 - **Selection feedback**: 
   - Selected document: rose border + rose background tint
@@ -104,13 +103,13 @@ Prisma DB → /api/viz/overview → VizDataPoint[] → Components
 
 All three views are linked via the `OverviewDashboard` component:
 
-1. **Brush selection** in scatterplot → highlights in all views
-2. **Bin click** in histogram → filters all views to score range
-3. **Document/chunk click** in fingerprint chart → filters based on selection level:
+1. **Point click** in scatterplot → highlights that run and opens the question page
+2. **Bin click** in histogram → highlights runs within that score range across views
+3. **Document/chunk click** in fingerprint chart → highlights based on selection level:
    - Document-level: All runs that retrieved any chunk from that document
    - Chunk-level: Only runs that retrieved that specific chunk
 
-Filter state is managed via React `useState` and passed down as props. Each new selection replaces the previous one (non-cumulative filtering for simplicity).
+Highlight state is managed via React `useState` and passed down as props. Each new selection replaces the previous one (non-cumulative for simplicity).
 
 ## D3.js Usage
 

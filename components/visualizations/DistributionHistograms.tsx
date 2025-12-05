@@ -9,7 +9,6 @@ type DistributionHistogramsProps = {
   data: VizDataPoint[];
   activeRange?: [number, number] | null;
   activeMetric?: "llm" | "similarity" | null;
-  viewMode?: "highlight" | "filter";
   onBinClick?: (metric: "llm" | "similarity", range: [number, number]) => void;
 };
 
@@ -17,7 +16,6 @@ export function DistributionHistograms({
   data,
   activeRange = null,
   activeMetric = null,
-  viewMode = "filter",
   onBinClick,
 }: DistributionHistogramsProps) {
   const llmSvgRef = useRef<SVGSVGElement>(null);
@@ -187,7 +185,7 @@ export function DistributionHistograms({
         return getBinColor(center);
       })
       .attr("opacity", (d) => {
-        if (!activeRange || activeMetric !== metric || viewMode === "filter") return 0.8;
+        if (!activeRange || activeMetric !== metric) return 0.8;
         const overlapsRange =
           (d.x0 ?? 0) < activeRange[1] && (d.x1 ?? 0) > activeRange[0];
         return overlapsRange ? 0.95 : 0.25;
@@ -220,7 +218,7 @@ export function DistributionHistograms({
     renderHistogram(llmSvgRef, llmScores, "LLM-as-Judge Score Distribution", "llm");
     renderHistogram(simSvgRef, similarityScores, "Similarity Score Distribution", "similarity");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, dimensions, activeRange, activeMetric, viewMode]);
+  }, [data, dimensions, activeRange, activeMetric]);
 
   // Handle resize
   useEffect(() => {

@@ -8,7 +8,6 @@ type QualityScatterplotProps = {
   data: VizDataPoint[];
   selectedIds?: Set<string>;
   highlightIds?: Set<string>;
-  viewMode?: "highlight" | "filter";
   onSelectionChange?: (selectedIds: Set<string>) => void;
   onPointClick?: (runId: string) => void;
 };
@@ -17,7 +16,6 @@ export function QualityScatterplot({
   data,
   selectedIds = new Set(),
   highlightIds = new Set(),
-  viewMode = "filter",
   onSelectionChange,
   onPointClick,
 }: QualityScatterplotProps) {
@@ -27,6 +25,12 @@ export function QualityScatterplot({
 
   useEffect(() => {
     if (!svgRef.current || data.length === 0) return;
+
+    const sortedData = [...data].sort((a, b) => {
+      const aHighlighted = highlightIds.has(a.runId);
+      const bHighlighted = highlightIds.has(b.runId);
+      return Number(aHighlighted) - Number(bHighlighted);
+    });
 
     const margin = { top: 12, right: 60, bottom: 44, left: 56 };
     const height = dimensions.height - margin.top - margin.bottom;
@@ -118,7 +122,7 @@ export function QualityScatterplot({
     // Plot points
     const circles = g
       .selectAll("circle")
-      .data(data)
+      .data(sortedData)
       .join("circle")
       .attr("cx", (d) => xScale(d.llmScore))
       .attr("cy", (d) => yScale(d.avgSimilarity))
@@ -127,19 +131,20 @@ export function QualityScatterplot({
       .attr("stroke", (d) => (selectedIds.has(d.runId) ? "#000" : "#fff"))
       .attr("stroke-width", (d) => (selectedIds.has(d.runId) ? 3 : 1))
       .attr("opacity", (d) => {
-        if (viewMode === "highlight" && highlightIds.size > 0) {
-          return highlightIds.has(d.runId) ? 0.9 : 0.2;
-        }
+        if (highlightIds.size > 0) return highlightIds.has(d.runId) ? 0.9 : 0.2;
         return 0.7;
       })
       .style("cursor", "pointer")
+      .style("pointer-events", (d) =>
+        highlightIds.size > 0 && !highlightIds.has(d.runId) ? "none" : "auto"
+      )
       .on("mouseover", function (event, d) {
         d3.select(this).attr("opacity", 1).attr("r", 10);
         showTooltip(event as MouseEvent, d);
       })
       .on("mouseout", function () {
         const baseOpacity =
-          viewMode === "highlight" && highlightIds.size > 0
+          highlightIds.size > 0
             ? highlightIds.has((d3.select(this).datum() as VizDataPoint).runId)
               ? 0.9
               : 0.2
@@ -149,6 +154,7 @@ export function QualityScatterplot({
       })
       .on("click", (event, d) => {
         event.stopPropagation();
+        if (highlightIds.size > 0 && !highlightIds.has(d.runId)) return;
         if (onSelectionChange) {
           const newSelection = new Set(selectedIds);
           if (newSelection.has(d.runId)) {
@@ -160,31 +166,7 @@ export function QualityScatterplot({
         }
         onPointClick?.(d.runId);
       });
-
-    // Brushing for area selection
-    const brush = d3
-      .brush()
-      .extent([[0, 0], [width, height]])
-      .on("end", (event) => {
-        if (!onSelectionChange) return;
-        if (!event.selection) {
-          onSelectionChange(new Set());
-          return;
-        }
-        const [[x0, y0], [x1, y1]] = event.selection;
-        const ids = new Set<string>();
-        data.forEach((d) => {
-          const x = xScale(d.llmScore);
-          const y = yScale(d.avgSimilarity);
-          if (x0 <= x && x <= x1 && y0 <= y && y <= y1) {
-            ids.add(d.runId);
-          }
-        });
-        onSelectionChange(ids);
-      });
-
-    g.append("g").attr("class", "brush").call(brush);
-  }, [data, dimensions, selectedIds, highlightIds, viewMode, onSelectionChange, onPointClick]);
+  }, [data, dimensions, selectedIds, highlightIds, onSelectionChange, onPointClick]);
 
   // Handle resize
   useEffect(() => {

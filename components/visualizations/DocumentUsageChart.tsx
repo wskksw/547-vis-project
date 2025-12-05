@@ -49,7 +49,6 @@ type DocumentUsageChartProps = {
   activeChunkKey?: string | null;
   onChunkSelect?: (payload: { runIds: Set<string>; chunkKey: string | null; docTitle: string; chunkIndex: number | null }) => void;
   highlightedRunIds?: Set<string>;
-  viewMode?: "highlight" | "filter";
   sortBy?: "severity" | "flags" | "poor" | "retrieved";
   severityWeight?: number;
 };
@@ -64,7 +63,6 @@ export function DocumentUsageChart({
   activeChunkKey = null,
   onChunkSelect,
   highlightedRunIds = new Set(),
-  viewMode = "filter",
   sortBy = "severity",
   severityWeight = 10,
 }: DocumentUsageChartProps) {
@@ -72,6 +70,13 @@ export function DocumentUsageChart({
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [activeChunk, setActiveChunk] = useState<{ docTitle: string; chunk: ChunkAggregate | null } | null>(null);
+
+  // Clear local active state when highlights are cleared upstream
+  useEffect(() => {
+    if (!activeChunkKey && highlightedRunIds.size === 0 && activeChunk) {
+      setActiveChunk(null);
+    }
+  }, [activeChunkKey, highlightedRunIds, activeChunk]);
 
   // Track container width so chunk positions map to actual pixels
   useEffect(() => {
@@ -323,9 +328,9 @@ export function DocumentUsageChart({
               className={`rounded-md border px-2.5 py-1.5 transition-colors ${isDocSelected
                 ? "border-rose-300 bg-rose-50/60"
                 : "border-gray-100 bg-white hover:border-gray-300 cursor-pointer"
-                }`}
+              }`}
               style={{
-                opacity: viewMode === "highlight" && highlightedRunIds.size > 0
+                opacity: highlightedRunIds.size > 0
                   ? doc.chunks.some((chunk) => chunk.runIds.some((id) => highlightedRunIds.has(id))) ? 1 : 0.35
                   : 1
               }}
@@ -370,12 +375,11 @@ export function DocumentUsageChart({
                         ? true
                         : chunk.runIds.some((id) => highlightedRunIds.has(id));
                     const baseOpacity = hasChunkSelected && !isActive ? 0.35 : 1;
-                    const opacity =
-                      viewMode === "highlight" && highlightedRunIds.size > 0
-                        ? chunkMatchesHighlight
-                          ? baseOpacity
-                          : 0.15
-                        : baseOpacity;
+                    const opacity = highlightedRunIds.size > 0
+                      ? chunkMatchesHighlight
+                        ? baseOpacity
+                        : 0.15
+                      : baseOpacity;
 
                     return (
                       <rect
@@ -387,6 +391,8 @@ export function DocumentUsageChart({
                         rx={4}
                         fill={colorForChunk(chunk)}
                         opacity={opacity}
+                        stroke={isActive ? "#fb7185" : "none"}
+                        strokeWidth={isActive ? 2 : 0}
                         className={`cursor-pointer transition-transform duration-150 ease-in-out hover:translate-y-[-1px] ${isActive ? "ring-2 ring-rose-400" : ""}`}
                         onMouseEnter={(event) => showTooltip(event, doc.title, chunk)}
                         onMouseLeave={hideTooltip}
